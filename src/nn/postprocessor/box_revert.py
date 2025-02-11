@@ -3,10 +3,11 @@ Copied from RT-DETR (https://github.com/lyuwenyu/RT-DETR)
 Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
+from enum import Enum
+
 import torch
 import torchvision
 from torch import Tensor
-from enum import Enum
 
 
 class BoxProcessFormat(Enum):
@@ -17,6 +18,7 @@ class BoxProcessFormat(Enum):
     * ``RESIZE_KEEP_RATIO``
     * ``RESIZE_KEEP_RATIO_PADDING``
     """
+
     RESIZE = 1
     RESIZE_KEEP_RATIO = 2
     RESIZE_KEEP_RATIO_PADDING = 3
@@ -24,13 +26,13 @@ class BoxProcessFormat(Enum):
 
 def box_revert(
     boxes: Tensor,
-    orig_sizes: Tensor=None,
-    eval_sizes: Tensor=None,
-    inpt_sizes: Tensor=None,
-    inpt_padding: Tensor=None,
-    normalized: bool=True,
-    in_fmt: str='cxcywh',
-    out_fmt: str='xyxy',
+    orig_sizes: Tensor = None,
+    eval_sizes: Tensor = None,
+    inpt_sizes: Tensor = None,
+    inpt_padding: Tensor = None,
+    normalized: bool = True,
+    in_fmt: str = "cxcywh",
+    out_fmt: str = "xyxy",
     process_fmt=BoxProcessFormat.RESIZE,
 ) -> Tensor:
     """
@@ -41,15 +43,15 @@ def box_revert(
         inpt_padding (Tensor), [N, 2], (w_pad, h_pad, ...).
         (inpt_sizes + inpt_padding) == eval_sizes
     """
-    assert in_fmt in ('cxcywh', 'xyxy'), ''
+    assert in_fmt in ("cxcywh", "xyxy"), ""
 
     if normalized and eval_sizes is not None:
         boxes = boxes * eval_sizes.repeat(1, 2).unsqueeze(1)
 
     if inpt_padding is not None:
-        if in_fmt == 'xyxy':
+        if in_fmt == "xyxy":
             boxes -= inpt_padding[:, :2].repeat(1, 2).unsqueeze(1)
-        elif in_fmt == 'cxcywh':
+        elif in_fmt == "cxcywh":
             boxes[..., :2] -= inpt_padding[:, :2].repeat(1, 2).unsqueeze(1)
 
     if orig_sizes is not None:

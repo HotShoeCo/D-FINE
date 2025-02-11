@@ -5,17 +5,22 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/edfd5a7/references
 The difference is that there is less copy-pasting from pycocotools
 in the end of the file, as python3 can suppress prints with contextlib
 """
-import os
+
 import contextlib
 import copy
+import os
+
+import faster_coco_eval.core.mask as mask_util
 import numpy as np
 import torch
-
 from faster_coco_eval import COCO, COCOeval_faster
-import faster_coco_eval.core.mask as mask_util
+
 from ...core import register
 from ...misc import dist_utils
-__all__ = ['CocoEvaluator',]
+
+__all__ = [
+    "CocoEvaluator",
+]
 
 
 @register()
@@ -23,12 +28,14 @@ class CocoEvaluator(object):
     def __init__(self, coco_gt, iou_types):
         assert isinstance(iou_types, (list, tuple))
         coco_gt = copy.deepcopy(coco_gt)
-        self.coco_gt : COCO = coco_gt
+        self.coco_gt: COCO = coco_gt
         self.iou_types = iou_types
 
         self.coco_eval = {}
         for iou_type in iou_types:
-            self.coco_eval[iou_type] = COCOeval_faster(coco_gt, iouType=iou_type, print_function=print, separate_eval=True)
+            self.coco_eval[iou_type] = COCOeval_faster(
+                coco_gt, iouType=iou_type, print_function=print, separate_eval=True
+            )
 
         self.img_ids = []
         self.eval_imgs = {k: [] for k in iou_types}
@@ -36,10 +43,11 @@ class CocoEvaluator(object):
     def cleanup(self):
         self.coco_eval = {}
         for iou_type in self.iou_types:
-            self.coco_eval[iou_type] = COCOeval_faster(self.coco_gt, iouType=iou_type, print_function=print, separate_eval=True)
+            self.coco_eval[iou_type] = COCOeval_faster(
+                self.coco_gt, iouType=iou_type, print_function=print, separate_eval=True
+            )
         self.img_ids = []
         self.eval_imgs = {k: [] for k in self.iou_types}
-
 
     def update(self, predictions):
         img_ids = list(np.unique(list(predictions.keys())))
@@ -50,14 +58,20 @@ class CocoEvaluator(object):
             coco_eval = self.coco_eval[iou_type]
 
             # suppress pycocotools prints
-            with open(os.devnull, 'w') as devnull:
+            with open(os.devnull, "w") as devnull:
                 with contextlib.redirect_stdout(devnull):
                     coco_dt = self.coco_gt.loadRes(results) if results else COCO()
                     coco_eval.cocoDt = coco_dt
                     coco_eval.params.imgIds = list(img_ids)
                     coco_eval.evaluate()
 
-            self.eval_imgs[iou_type].append(np.array(coco_eval._evalImgs_cpp).reshape(len(coco_eval.params.catIds), len(coco_eval.params.areaRng), len(coco_eval.params.imgIds)))
+            self.eval_imgs[iou_type].append(
+                np.array(coco_eval._evalImgs_cpp).reshape(
+                    len(coco_eval.params.catIds),
+                    len(coco_eval.params.areaRng),
+                    len(coco_eval.params.imgIds),
+                )
+            )
 
     def synchronize_between_processes(self):
         for iou_type in self.iou_types:
@@ -164,7 +178,7 @@ class CocoEvaluator(object):
                     {
                         "image_id": original_id,
                         "category_id": labels[k],
-                        'keypoints': keypoint,
+                        "keypoints": keypoint,
                         "score": scores[k],
                     }
                     for k, keypoint in enumerate(keypoints)
@@ -177,6 +191,7 @@ def convert_to_xywh(boxes):
     xmin, ymin, xmax, ymax = boxes.unbind(1)
     return torch.stack((xmin, ymin, xmax - xmin, ymax - ymin), dim=1)
 
+
 def merge(img_ids, eval_imgs):
     all_img_ids = dist_utils.all_gather(img_ids)
     all_eval_imgs = dist_utils.all_gather(eval_imgs)
@@ -188,7 +203,6 @@ def merge(img_ids, eval_imgs):
     merged_eval_imgs = []
     for p in all_eval_imgs:
         merged_eval_imgs.extend(p)
-
 
     merged_img_ids = np.array(merged_img_ids)
     merged_eval_imgs = np.concatenate(merged_eval_imgs, axis=2).ravel()
