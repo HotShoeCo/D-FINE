@@ -1,4 +1,4 @@
-""""
+""" "
 Copied from RT-DETR (https://github.com/lyuwenyu/RT-DETR)
 Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
@@ -7,13 +7,14 @@ import PIL
 import torch
 import torch.utils.data
 import torchvision
+
 torchvision.disable_beta_transforms_warning()
 
-__all__ = ['show_sample']
+__all__ = ["show_sample"]
+
 
 def show_sample(sample):
-    """for coco dataset/dataloader
-    """
+    """for coco dataset/dataloader"""
     import matplotlib.pyplot as plt
     from torchvision.transforms.v2 import functional as F
     from torchvision.utils import draw_bounding_boxes

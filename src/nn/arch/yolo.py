@@ -7,13 +7,18 @@ import torch
 
 from ...core import register
 
-
-__all__ = ['YOLO', ]
+__all__ = [
+    "YOLO",
+]
 
 
 @register()
 class YOLO(torch.nn.Module):
-    __inject__ = ['backbone', 'neck', 'head', ]
+    __inject__ = [
+        "backbone",
+        "neck",
+        "head",
+    ]
 
     def __init__(self, backbone: torch.nn.Module, neck, head):
         super().__init__()
@@ -27,9 +32,11 @@ class YOLO(torch.nn.Module):
         x = self.head(x)
         return x
 
-    def deploy(self, ):
+    def deploy(
+        self,
+    ):
         self.eval()
         for m in self.modules():
-            if m is not self and hasattr(m, 'deploy'):
+            if m is not self and hasattr(m, "deploy"):
                 m.deploy()
         return self

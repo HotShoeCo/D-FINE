@@ -3,37 +3,38 @@ Copied from RT-DETR (https://github.com/lyuwenyu/RT-DETR)
 Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
-import torch
-import torch.utils.data as data
-import torch.nn.functional as F
-from torch.utils.data import default_collate
-
-import torchvision
-import torchvision.transforms.v2 as VT
-from torchvision.transforms.v2 import functional as VF, InterpolationMode
-
 import random
 from functools import partial
 
+import torch
+import torch.nn.functional as F
+import torch.utils.data as data
+import torchvision
+import torchvision.transforms.v2 as VT
+from torch.utils.data import default_collate
+from torchvision.transforms.v2 import InterpolationMode
+from torchvision.transforms.v2 import functional as VF
+
 from ..core import register
+
 torchvision.disable_beta_transforms_warning()
 
 
 __all__ = [
-    'DataLoader',
-    'BaseCollateFunction',
-    'BatchImageCollateFunction',
-    'batch_image_collate_fn'
+    "DataLoader",
+    "BaseCollateFunction",
+    "BatchImageCollateFunction",
+    "batch_image_collate_fn",
 ]
 
 
 @register()
 class DataLoader(data.DataLoader):
-    __inject__ = ['dataset', 'collate_fn']
+    __inject__ = ["dataset", "collate_fn"]
 
     def __repr__(self) -> str:
         format_string = self.__class__.__name__ + "("
-        for n in ['dataset', 'batch_size', 'num_workers', 'drop_last', 'collate_fn']:
+        for n in ["dataset", "batch_size", "num_workers", "drop_last", "collate_fn"]:
             format_string += "\n"
             format_string += "    {0}: {1}".format(n, getattr(self, n))
         format_string += "\n)"
@@ -46,7 +47,7 @@ class DataLoader(data.DataLoader):
 
     @property
     def epoch(self):
-        return self._epoch if hasattr(self, '_epoch') else -1
+        return self._epoch if hasattr(self, "_epoch") else -1
 
     @property
     def shuffle(self):
@@ -54,14 +55,13 @@ class DataLoader(data.DataLoader):
 
     @shuffle.setter
     def shuffle(self, shuffle):
-        assert isinstance(shuffle, bool), 'shuffle must be a boolean'
+        assert isinstance(shuffle, bool), "shuffle must be a boolean"
         self._shuffle = shuffle
 
 
 @register()
 def batch_image_collate_fn(items):
-    """only batch image
-    """
+    """only batch image"""
     return torch.cat([x[0][None] for x in items], dim=0), [x[1] for x in items]
 
 
@@ -71,10 +71,10 @@ class BaseCollateFunction(object):
 
     @property
     def epoch(self):
-        return self._epoch if hasattr(self, '_epoch') else -1
+        return self._epoch if hasattr(self, "_epoch") else -1
 
     def __call__(self, items):
-        raise NotImplementedError('')
+        raise NotImplementedError("")
 
 
 def generate_scales(base_size, base_size_repeat):
@@ -96,7 +96,9 @@ class BatchImageCollateFunction(BaseCollateFunction):
     ) -> None:
         super().__init__()
         self.base_size = base_size
-        self.scales = generate_scales(base_size, base_size_repeat) if base_size_repeat is not None else None
+        self.scales = (
+            generate_scales(base_size, base_size_repeat) if base_size_repeat is not None else None
+        )
         self.stop_epoch = stop_epoch if stop_epoch is not None else 100000000
         self.ema_restart_decay = ema_restart_decay
         # self.interpolation = interpolation
@@ -112,9 +114,9 @@ class BatchImageCollateFunction(BaseCollateFunction):
 
             sz = random.choice(self.scales)
             images = F.interpolate(images, size=sz)
-            if 'masks' in targets[0]:
+            if "masks" in targets[0]:
                 for tg in targets:
-                    tg['masks'] = F.interpolate(tg['masks'], size=sz, mode='nearest')
-                raise NotImplementedError('')
+                    tg["masks"] = F.interpolate(tg["masks"], size=sz, mode="nearest")
+                raise NotImplementedError("")
 
         return images, targets

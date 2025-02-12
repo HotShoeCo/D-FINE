@@ -2,40 +2,38 @@
 
 https://towardsdatascience.com/getting-started-with-pytorch-image-models-timm-a-practitioners-guide-4e77b4bf9055#0583
 """
-import torch
-from torchvision.models.feature_extraction import get_graph_node_names, create_feature_extractor
 
-from .utils import IntermediateLayerGetter
+import torch
+from torchvision.models.feature_extraction import create_feature_extractor, get_graph_node_names
+
 from ...core import register
+from .utils import IntermediateLayerGetter
 
 
 @register()
 class TimmModel(torch.nn.Module):
-    def __init__(self, \
-        name,
-        return_layers,
-        pretrained=False,
-        exportable=True,
-        features_only=True,
-        **kwargs) -> None:
-
+    def __init__(
+        self, name, return_layers, pretrained=False, exportable=True, features_only=True, **kwargs
+    ) -> None:
         super().__init__()
 
         import timm
+
         model = timm.create_model(
             name,
             pretrained=pretrained,
             exportable=exportable,
             features_only=features_only,
-            **kwargs
+            **kwargs,
         )
         # nodes, _ = get_graph_node_names(model)
         # print(nodes)
         # features = {'': ''}
         # model = create_feature_extractor(model, return_nodes=features)
 
-        assert set(return_layers).issubset(model.feature_info.module_name()), \
-            f'return_layers should be a subset of {model.feature_info.module_name()}'
+        assert set(return_layers).issubset(
+            model.feature_info.module_name()
+        ), f"return_layers should be a subset of {model.feature_info.module_name()}"
 
         # self.model = model
         self.model = IntermediateLayerGetter(model, return_layers)
@@ -52,9 +50,8 @@ class TimmModel(torch.nn.Module):
         return outputs
 
 
-if __name__ == '__main__':
-
-    model = TimmModel(name='resnet34', return_layers=['layer2', 'layer3'])
+if __name__ == "__main__":
+    model = TimmModel(name="resnet34", return_layers=["layer2", "layer3"])
     data = torch.rand(1, 3, 640, 640)
     outputs = model(data)
 
