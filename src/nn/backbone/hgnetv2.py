@@ -22,6 +22,11 @@ ones_ = nn.init.ones_
 
 __all__ = ["HGNetv2"]
 
+def safe_get_rank():
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_rank()
+    else:
+        return 0
 
 class LearnableAffineBlock(nn.Module):
     def __init__(self, scale_value=1.0, bias_value=0.0):
@@ -498,7 +503,7 @@ class HGNetv2(nn.Module):
                     print(f"Loaded stage1 {name} HGNetV2 from local file.")
                 else:
                     # If the file doesn't exist locally, download from the URL
-                    if torch.distributed.get_rank() == 0:
+                    if safe_get_rank() == 0:
                         print(
                             GREEN
                             + "If the pretrained HGNetV2 can't be downloaded automatically. Please check your network connection."
@@ -528,7 +533,7 @@ class HGNetv2(nn.Module):
                 self.load_state_dict(state)
 
             except (Exception, KeyboardInterrupt) as e:
-                if torch.distributed.get_rank() == 0:
+                if safe_get_rank() == 0:
                     print(f"{str(e)}")
                     logging.error(
                         RED + "CRITICAL WARNING: Failed to load pretrained HGNetV2 model" + RESET
