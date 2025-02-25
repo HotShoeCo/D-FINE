@@ -11,6 +11,7 @@ import json
 import time
 
 import torch
+import wandb
 
 from ..misc import dist_utils, stats
 from ._solver import BaseSolver
@@ -18,11 +19,17 @@ from .det_engine import evaluate, train_one_epoch
 
 
 class DetSolver(BaseSolver):
-    def fit(
-        self,
-    ):
+    def fit(self):
         self.train()
         args = self.cfg
+        metric_names = ["AP50:95", "AP50", "AP75", "APsmall", "APmedium", "APlarge"]
+
+        wandb.init(
+            project=args.yaml_cfg["project_name"],
+            name=args.yaml_cfg["exp_name"],
+            config=args.yaml_cfg,
+        )
+        wandb.watch(self.model)
 
         n_parameters, model_stats = stats(self.cfg)
         print(model_stats)
@@ -158,6 +165,12 @@ class DetSolver(BaseSolver):
                 "n_parameters": n_parameters,
             }
 
+            wandb_logs = {}
+            for idx, metric_name in enumerate(metric_names):
+                wandb_logs[f"metrics/{metric_name}"] = test_stats["coco_eval_bbox"][idx]
+            wandb_logs["epoch"] = epoch
+            wandb.log(wandb_logs)
+
             if self.output_dir and dist_utils.is_main_process():
                 with (self.output_dir / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
@@ -179,9 +192,7 @@ class DetSolver(BaseSolver):
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         print("Training time {}".format(total_time_str))
 
-    def val(
-        self,
-    ):
+    def val(self):
         self.eval()
 
         module = self.ema.module if self.ema else self.model

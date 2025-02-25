@@ -75,9 +75,7 @@ class BaseConfig(object):
         self.device: str = ""
 
     @property
-    def model(
-        self,
-    ) -> nn.Module:
+    def model(self) -> nn.Module:
         return self._model
 
     @model.setter
@@ -86,9 +84,7 @@ class BaseConfig(object):
         self._model = m
 
     @property
-    def postprocessor(
-        self,
-    ) -> nn.Module:
+    def postprocessor(self) -> nn.Module:
         return self._postprocessor
 
     @postprocessor.setter
@@ -97,9 +93,7 @@ class BaseConfig(object):
         self._postprocessor = m
 
     @property
-    def criterion(
-        self,
-    ) -> nn.Module:
+    def criterion(self) -> nn.Module:
         return self._criterion
 
     @criterion.setter
@@ -108,9 +102,7 @@ class BaseConfig(object):
         self._criterion = m
 
     @property
-    def optimizer(
-        self,
-    ) -> Optimizer:
+    def optimizer(self) -> Optimizer:
         return self._optimizer
 
     @optimizer.setter
@@ -121,9 +113,7 @@ class BaseConfig(object):
         self._optimizer = m
 
     @property
-    def lr_scheduler(
-        self,
-    ) -> LRScheduler:
+    def lr_scheduler(self) -> LRScheduler:
         return self._lr_scheduler
 
     @lr_scheduler.setter
@@ -134,9 +124,7 @@ class BaseConfig(object):
         self._lr_scheduler = m
 
     @property
-    def lr_warmup_scheduler(
-        self,
-    ) -> LRScheduler:
+    def lr_warmup_scheduler(self) -> LRScheduler:
         return self._lr_warmup_scheduler
 
     @lr_warmup_scheduler.setter
@@ -184,9 +172,7 @@ class BaseConfig(object):
         self._val_dataloader = loader
 
     @property
-    def ema(
-        self,
-    ) -> nn.Module:
+    def ema(self) -> nn.Module:
         if self._ema is None and self.use_ema and self.model is not None:
             from ..optim import ModelEMA
 
@@ -305,9 +291,7 @@ class BaseConfig(object):
         assert isinstance(m, SummaryWriter), f"{type(m)} must be SummaryWriter"
         self._writer = m
 
-    def __repr__(
-        self,
-    ):
+    def __repr__(self):
         s = ""
         for k, v in self.__dict__.items():
             if not k.startswith("_"):
