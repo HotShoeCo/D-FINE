@@ -151,6 +151,13 @@ class BaseSolver(object):
             if dist_utils.is_main_process():
                 self.writer.add_text("config", "{:s}".format(cfg.__repr__()), 0)
 
+        try:
+            import wandb
+
+            self.use_wandb = True
+        except ImportError:
+            self.use_wandb = False
+
     def cleanup(self):
         if self.writer:
             atexit.register(self.writer.close)

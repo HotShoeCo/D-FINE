@@ -11,7 +11,6 @@ import json
 import time
 
 import torch
-import wandb
 
 from ..misc import dist_utils, stats
 from ._solver import BaseSolver
@@ -24,12 +23,15 @@ class DetSolver(BaseSolver):
         args = self.cfg
         metric_names = ["AP50:95", "AP50", "AP75", "APsmall", "APmedium", "APlarge"]
 
-        wandb.init(
-            project=args.yaml_cfg["project_name"],
-            name=args.yaml_cfg["exp_name"],
-            config=args.yaml_cfg,
-        )
-        wandb.watch(self.model)
+        if self.use_wandb:
+            import wandb
+
+            wandb.init(
+                project=args.yaml_cfg["project_name"],
+                name=args.yaml_cfg["exp_name"],
+                config=args.yaml_cfg,
+            )
+            wandb.watch(self.model)
 
         n_parameters, model_stats = stats(self.cfg)
         print(model_stats)
@@ -81,6 +83,7 @@ class DetSolver(BaseSolver):
                 scaler=self.scaler,
                 lr_warmup_scheduler=self.lr_warmup_scheduler,
                 writer=self.writer,
+                use_wandb=self.use_wandb,
             )
 
             if self.lr_warmup_scheduler is None or self.lr_warmup_scheduler.finished():
@@ -104,6 +107,8 @@ class DetSolver(BaseSolver):
                 self.val_dataloader,
                 self.evaluator,
                 self.device,
+                epoch,
+                self.use_wandb,
             )
 
             # TODO
@@ -165,11 +170,12 @@ class DetSolver(BaseSolver):
                 "n_parameters": n_parameters,
             }
 
-            wandb_logs = {}
-            for idx, metric_name in enumerate(metric_names):
-                wandb_logs[f"metrics/{metric_name}"] = test_stats["coco_eval_bbox"][idx]
-            wandb_logs["epoch"] = epoch
-            wandb.log(wandb_logs)
+            if self.use_wandb:
+                wandb_logs = {}
+                for idx, metric_name in enumerate(metric_names):
+                    wandb_logs[f"metrics/{metric_name}"] = test_stats["coco_eval_bbox"][idx]
+                wandb_logs["epoch"] = epoch
+                wandb.log(wandb_logs)
 
             if self.output_dir and dist_utils.is_main_process():
                 with (self.output_dir / "log.txt").open("a") as f:
@@ -203,6 +209,8 @@ class DetSolver(BaseSolver):
             self.val_dataloader,
             self.evaluator,
             self.device,
+            epoch=-1,
+            use_wandb=False,
         )
 
         if self.output_dir:
