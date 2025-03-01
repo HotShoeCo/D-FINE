@@ -20,4 +20,4 @@ ema:
   warmups: 1000
 
 project_name: D-FINE # for wandb
-exp_name: baseline # eandb experiment name
+exp_name: baseline # wandb experiment name
