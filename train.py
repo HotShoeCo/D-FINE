@@ -29,9 +29,7 @@ if debug:
     torch.Tensor.__repr__ = custom_repr
 
 
-def main(
-    args,
-) -> None:
+def main(args) -> None:
     """main"""
     dist_utils.setup_distributed(args.print_rank, args.print_method, seed=args.seed)
 
