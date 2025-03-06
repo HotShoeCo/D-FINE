@@ -22,6 +22,12 @@ ones_ = nn.init.ones_
 
 __all__ = ["HGNetv2"]
 
+def safe_barrier():
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.barrier()
+    else:
+        pass
+
 def safe_get_rank():
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         return torch.distributed.get_rank()
@@ -523,9 +529,9 @@ class HGNetv2(nn.Module):
                         state = torch.hub.load_state_dict_from_url(
                             download_url, map_location="cpu", model_dir=local_model_dir
                         )
-                        torch.distributed.barrier()
+                        safe_barrier()
                     else:
-                        torch.distributed.barrier()
+                        safe_barrier()
                         state = torch.load(local_model_dir)
 
                     print(f"Loaded stage1 {name} HGNetV2 from URL.")
