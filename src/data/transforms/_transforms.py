@@ -49,6 +49,9 @@ class EmptyTransform(T.Transform):
     def forward(self, *inputs):
         inputs = inputs if len(inputs) > 1 else inputs[0]
         return inputs
+    
+    def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        return self.forward(input)
 
 
 @register()
@@ -83,6 +86,10 @@ class PadToSize(T.Pad):
         if len(outputs) > 1 and isinstance(outputs[1], dict):
             outputs[1]["padding"] = torch.tensor(self.padding)
         return outputs
+    
+    def transform(self, inpt, params):
+        # Ignore params if not needed, and simply delegate to the core logic
+        return self._transform(inpt, params)
 
 
 @register()
@@ -132,7 +139,9 @@ class ConvertBoxes(T.Transform):
 
         return inpt
 
-
+    def transform(self, inpt, params):
+        return self._transform(inpt, params)
+    
 @register()
 class ConvertPILImage(T.Transform):
     _transformed_types = (PIL.Image.Image,)
@@ -153,3 +162,7 @@ class ConvertPILImage(T.Transform):
         inpt = Image(inpt)
 
         return inpt
+    
+    def transform(self, inpt, params):
+        # Ignore params if not needed, and simply delegate to the core logic
+        return self._transform(inpt, params)
