@@ -7,7 +7,7 @@ ema:
   start: 0
 
 
-epoches: 72
+epochs: 72
 clip_max_norm: 0.1
 
 

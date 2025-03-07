@@ -43,7 +43,7 @@ optimizer:
 
 
 # Increase to search for the optimal ema
-epoches: 140
+epochs: 140
 train_dataloader:
   dataset:
     transforms:

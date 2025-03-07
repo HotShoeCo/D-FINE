@@ -32,7 +32,7 @@ class ClasSolver(BaseSolver):
 
         start_time = time.time()
         start_epoch = self.last_epoch + 1
-        for epoch in range(start_epoch, args.epoches):
+        for epoch in range(start_epoch, args.epochs):
             if dist_utils.is_dist_available_and_initialized():
                 self.train_dataloader.sampler.set_epoch(epoch)
 
