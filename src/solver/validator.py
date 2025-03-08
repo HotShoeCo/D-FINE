@@ -32,10 +32,6 @@ class Validator:
         self.conf_matrix = None
 
     def compute_metrics(self, extended=False) -> Dict[str, float]:
-        print(torch.max(self.preds[0]["scores"]))
-        print(torch.max(self.preds[0]["boxes"]))
-        print(torch.max(self.gt[0]["boxes"]))
-
         filtered_preds = filter_preds(copy.deepcopy(self.preds), self.conf_thresh)
         metrics = self._compute_main_metrics(filtered_preds)
         if not extended:
