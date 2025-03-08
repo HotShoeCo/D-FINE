@@ -195,7 +195,7 @@ def evaluate(
             gt.append(
                 {
                     "boxes": scale_boxes(  # from model input size to original img size
-                        torch.tensor(target["boxes"].tolist()).to(device),
+                        target["boxes"],
                         (target["orig_size"][1], target["orig_size"][0]),
                         (samples[idx].shape[-1], samples[idx].shape[-2]),
                     ),
