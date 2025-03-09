@@ -8,7 +8,6 @@ Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 
 import os
 import sys
-from pprint import pprint 
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -17,6 +16,7 @@ import argparse
 from src.core import YAMLConfig, yaml_utils
 from src.misc import dist_utils
 from src.solver import TASKS
+from pprint import pprint 
 
 debug = False
 
