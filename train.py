@@ -8,6 +8,7 @@ Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 
 import os
 import sys
+import pprint
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -56,7 +57,8 @@ def main(args) -> None:
         if "HGNetv2" in cfg.yaml_cfg:
             cfg.yaml_cfg["HGNetv2"]["pretrained"] = False
 
-    print("cfg: ", cfg.__dict__)
+    print("cfg: ")
+    pprint(cfg.__dict__)
 
     solver = TASKS[cfg.yaml_cfg["task"]](cfg)
 
