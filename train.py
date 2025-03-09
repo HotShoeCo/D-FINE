@@ -8,6 +8,7 @@ Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 
 import os
 import sys
+import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -21,13 +22,18 @@ from pprint import pprint
 debug = False
 
 if debug:
-    import torch
-
     def custom_repr(self):
         return f"{{Tensor:{tuple(self.shape)}}} {original_repr(self)}"
 
     original_repr = torch.Tensor.__repr__
     torch.Tensor.__repr__ = custom_repr
+
+
+def safe_get_rank():
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_rank()
+    else:
+        return 0
 
 
 def main(args) -> None:
@@ -57,8 +63,9 @@ def main(args) -> None:
         if "HGNetv2" in cfg.yaml_cfg:
             cfg.yaml_cfg["HGNetv2"]["pretrained"] = False
 
-    print("cfg: ")
-    pprint(cfg.__dict__)
+    if safe_get_rank() == 0:
+        print("cfg: ")
+        pprint(cfg.__dict__)
 
     solver = TASKS[cfg.yaml_cfg["task"]](cfg)
 
