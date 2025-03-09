@@ -10,6 +10,7 @@ import faster_coco_eval.core.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
+import os
 from PIL import Image
 
 from ...core import register
@@ -50,7 +51,8 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
     def load_item(self, idx):
         image, target = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
-        target = {"image_id": image_id, "annotations": target}
+        image_path = os.path.join(self.img_folder, self.coco.loadImgs(image_id)[0]["file_name"])
+        target = {"image_id": image_id, "image_path": image_path, "annotations": target}
 
         if self.remap_mscoco_category:
             image, target = self.prepare(image, target, category2label=mscoco_category2label)
@@ -130,6 +132,8 @@ class ConvertCocoPolysToMask(object):
         image_id = target["image_id"]
         image_id = torch.tensor([image_id])
 
+        image_path = target["image_path"]
+
         anno = target["annotations"]
 
         anno = [obj for obj in anno if "iscrowd" not in obj or obj["iscrowd"] == 0]
@@ -175,6 +179,7 @@ class ConvertCocoPolysToMask(object):
         if self.return_masks:
             target["masks"] = masks
         target["image_id"] = image_id
+        target["image_path"] = image_path
         if keypoints is not None:
             target["keypoints"] = keypoints
 
