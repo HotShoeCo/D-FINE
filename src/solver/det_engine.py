@@ -18,6 +18,7 @@ from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
 from ..data import CocoEvaluator
+from ..data.dataset import mscoco_category2label
 from ..misc import MetricLogger, SmoothedValue, dist_utils
 from ..optim import ModelEMA, Warmup
 from .validator import Validator, scale_boxes
@@ -202,8 +203,13 @@ def evaluate(
                     "labels": target["labels"],
                 }
             )
+            labels = (
+                torch.tensor([mscoco_category2label[int(x.item())] for x in result["labels"].flatten()])
+                .to(result["labels"].device)
+                .reshape(result["labels"].shape)
+            )
             preds.append(
-                {"boxes": result["boxes"], "labels": result["labels"], "scores": result["scores"]}
+                {"boxes": result["boxes"], "labels": labels, "scores": result["scores"]}
             )
 
     # Conf matrix, F1, Precision, Recall, box IoU
