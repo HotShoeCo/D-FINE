@@ -69,11 +69,12 @@ class Validator:
         precision = tps / (tps + fps) if (tps + fps) > 0 else 0
         recall = tps / (tps + fns) if (tps + fns) > 0 else 0
         f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        iou = np.mean(ious).item() if ious else 0
         return {
             "f1": f1,
             "precision": precision,
             "recall": recall,
-            "iou": np.mean(ious) if ious else 0,
+            "iou": iou,
             "TPs": tps,
             "FPs": fps,
             "FNs": fns,
