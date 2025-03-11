@@ -8,8 +8,7 @@ Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 
 import math
 import sys
-from ast import List
-from typing import Dict, Iterable
+from typing import Dict, Iterable, List
 
 import numpy as np
 import torch
