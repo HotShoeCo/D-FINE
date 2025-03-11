@@ -84,6 +84,7 @@ class DetSolver(BaseSolver):
                 lr_warmup_scheduler=self.lr_warmup_scheduler,
                 writer=self.writer,
                 use_wandb=self.use_wandb,
+                output_dir=self.output_dir,
             )
 
             if self.lr_warmup_scheduler is None or self.lr_warmup_scheduler.finished():
@@ -109,6 +110,7 @@ class DetSolver(BaseSolver):
                 self.device,
                 epoch,
                 self.use_wandb,
+                output_dir=self.output_dir,
             )
 
             # TODO

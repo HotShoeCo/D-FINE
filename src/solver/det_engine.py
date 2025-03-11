@@ -8,8 +8,7 @@ Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 
 import math
 import sys
-from ast import List
-from typing import Dict, Iterable
+from typing import Dict, Iterable, List
 
 import numpy as np
 import torch
@@ -19,7 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from ..data import CocoEvaluator
 from ..data.dataset import mscoco_category2label
-from ..misc import MetricLogger, SmoothedValue, dist_utils
+from ..misc import MetricLogger, SmoothedValue, dist_utils, save_samples
 from ..optim import ModelEMA, Warmup
 from .validator import Validator, scale_boxes
 
@@ -52,13 +51,20 @@ def train_one_epoch(
     lr_warmup_scheduler: Warmup = kwargs.get("lr_warmup_scheduler", None)
     losses = []
 
+    output_dir = kwargs.get("output_dir", None)
+    num_visualization_sample_batch = kwargs.get("num_visualization_sample_batch", 1)    
+
     for i, (samples, targets) in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
     ):
-        samples = samples.to(device)
-        targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
         global_step = epoch * len(data_loader) + i
         metas = dict(epoch=epoch, step=i, global_step=global_step, epoch_step=len(data_loader))
+
+        if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
+            save_samples(samples, targets, output_dir, "train", normalized=True, box_fmt="cxcywh")
+
+        samples = samples.to(device)
+        targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
 
         if scaler is not None:
             with torch.autocast(device_type=str(device), cache_enabled=True):
@@ -149,6 +155,7 @@ def evaluate(
     device,
     epoch: int,
     use_wandb: bool,
+    **kwargs,
 ):
     if use_wandb:
         import wandb
@@ -169,7 +176,15 @@ def evaluate(
     gt: List[Dict[str, torch.Tensor]] = []
     preds: List[Dict[str, torch.Tensor]] = []
 
-    for samples, targets in metric_logger.log_every(data_loader, 10, header):
+    output_dir = kwargs.get("output_dir", None)
+    num_visualization_sample_batch = kwargs.get("num_visualization_sample_batch", 1)
+
+    for i, (samples, targets) in enumerate(metric_logger.log_every(data_loader, 10, header)):
+        global_step = epoch * len(data_loader) + i
+
+        if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
+            save_samples(samples, targets, output_dir, "val", normalized=False, box_fmt="xyxy")
+
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
 
