@@ -52,7 +52,7 @@ def train_one_epoch(
     losses = []
 
     output_dir = kwargs.get("output_dir", None)
-    num_visualization_sample_batch = kwargs.get("num_visualization_sample_batch", 1)    
+    num_visualization_sample_batch = kwargs.get("num_visualization_sample_batch", 1)
 
     for i, (samples, targets) in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
