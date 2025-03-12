@@ -12,6 +12,7 @@ import fiftyone as fo
 import fiftyone.core.fields as fof
 import fiftyone.core.labels as fol
 import fiftyone.core.models as fom
+import fiftyone.types as fot
 import fiftyone.zoo as foz
 import torch
 import torchvision.transforms as transforms
@@ -321,12 +322,20 @@ def main(args):
                 dataset_dir="saved_filtered_view", dataset_type=fo.types.FiftyOneDataset
             ).view()
         else:
-            dataset = foz.load_zoo_dataset(
-                "coco-2017",
-                split="validation",
-                dataset_name="evaluate-detections-tutorial",
-                dataset_dir="data/fiftyone",
-            )
+            if args.input:
+                dataset = fo.Dataset.from_dir(
+                    dataset_dir=args.input,
+                    dataset_type=fo.types.ImageDirectory,
+                    name="input-data"
+                )
+            else:
+                dataset = fo.Dataset.from_dir(
+                    dataset_dir="/efs/data/coco-2017",
+                    dataset_type=fot.COCODetectionDataset,
+                    name="coco-2017-val",
+                    data_path="/efs/data/coco-2017/val2017",  # images are in val2017
+                    labels_path="/efs/data/coco-2017/annotations/instances_val2017.json"
+                )
 
             dataset.persistent = True
 
@@ -362,12 +371,15 @@ def main(args):
                     label_field, F("confidence") > 0.5, only_matches=False
                 )
                 eval_key = "eval{:d}".format(i)
-                _ = predictions_view.evaluate_detections(
-                    label_field,
-                    gt_field="ground_truth",
-                    eval_key=eval_key,
-                    compute_mAP=True,
-                )
+                if "ground_truth" in dataset.get_field_schema():
+                    _ = predictions_view.evaluate_detections(
+                        label_field,
+                        gt_field="ground_truth",
+                        eval_key=eval_key,
+                        compute_mAP=True,
+                    )
+                else:
+                    print("Ground truth field not found in dataset; skipping evaluation.")
 
             # assign_iou_diff(predictions_view)
 
@@ -401,6 +413,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", "-c", type=str)
     parser.add_argument("--resume", "-r", type=str)
+    parser.add_argument("--input", type=str, help="Path to directory of input images")
     args = parser.parse_args()
 
     main(args)
