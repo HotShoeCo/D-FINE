@@ -24,10 +24,10 @@ class Compose(T.Compose):
             for op in ops:
                 if isinstance(op, dict):
                     name = op.pop("type")
-                    transfom = getattr(
+                    transform = getattr(
                         GLOBAL_CONFIG[name]["_pymodule"], GLOBAL_CONFIG[name]["_name"]
                     )(**op)
-                    transforms.append(transfom)
+                    transforms.append(transform)
                     op["type"] = name
 
                 elif isinstance(op, nn.Module):
