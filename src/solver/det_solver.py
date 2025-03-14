@@ -49,6 +49,8 @@ class DetSolver(BaseSolver):
                 self.val_dataloader,
                 self.evaluator,
                 self.device,
+                self.last_epoch,
+                self.use_wandb
             )
             for k in test_stats:
                 best_stat["epoch"] = self.last_epoch
