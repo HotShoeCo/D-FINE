@@ -9,6 +9,9 @@ English | [简体中文](README_cn.md) | [日本語](README_ja.md) | [English Bl
 
 
 <p align="center">
+    <a href="https://huggingface.co/spaces/developer0hye/D-FINE">
+        <img alt="hf" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue">
+    </a>
     <a href="https://github.com/Peterande/D-FINE/blob/master/LICENSE">
         <img alt="license" src="https://img.shields.io/badge/LICENSE-Apache%202.0-blue">
     </a>
