@@ -57,9 +57,10 @@ class OvInfer:
                 ori_image, self.target_size, interpolation=cv2.INTER_LINEAR
             )
         blob_image = cv2.dnn.blobFromImage(self.resized_image, 1.0 / 255.0)
-        orig_size = np.array([self.resized_image.shape[0], self.resized_image.shape[1]]).reshape(
+        orig_size = np.array([self.resized_image.shape[0], self.resized_image.shape[1]], dtype=np.int64).reshape(
             1, 2
         )
+
         inputs = {
             "images": blob_image,
             "orig_target_sizes": orig_size,
