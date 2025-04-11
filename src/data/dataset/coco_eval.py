@@ -191,7 +191,6 @@ def convert_to_xywh(boxes):
     xmin, ymin, xmax, ymax = boxes.unbind(1)
     return torch.stack((xmin, ymin, xmax - xmin, ymax - ymin), dim=1)
 
-
 def merge(img_ids, eval_imgs):
     all_img_ids = dist_utils.all_gather(img_ids)
     all_eval_imgs = dist_utils.all_gather(eval_imgs)

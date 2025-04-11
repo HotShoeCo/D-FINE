@@ -20,7 +20,7 @@ from ..data import CocoEvaluator
 from ..data.dataset import mscoco_category2label
 from ..misc import MetricLogger, SmoothedValue, dist_utils, save_samples
 from ..optim import ModelEMA, Warmup
-from .validator import Validator, scale_boxes
+from .validator import Validator, scale_boxes, scale_keypoints
 
 
 def train_one_epoch(
@@ -136,7 +136,7 @@ def train_one_epoch(
                 writer.add_scalar(f"Lr/pg_{j}", pg["lr"], global_step)
             for k, v in loss_dict_reduced.items():
                 writer.add_scalar(f"Loss/{k}", v.item(), global_step)
-
+    
     if use_wandb:
         wandb.log(
             {"lr": optimizer.param_groups[0]["lr"], "epoch": epoch, "train/loss": np.mean(losses)}
@@ -210,24 +210,33 @@ def evaluate(
 
         # validator format for metrics
         for idx, (target, result) in enumerate(zip(targets, results)):
-            gt.append(
-                {
-                    "boxes": scale_boxes(  # from model input size to original img size
-                        target["boxes"],
-                        (target["orig_size"][1], target["orig_size"][0]),
-                        (samples[idx].shape[-1], samples[idx].shape[-2]),
-                    ),
-                    "labels": target["labels"],
-                }
-            )
+            gt_item = {
+                "boxes": scale_boxes(  # from model input size to original img size
+                    target["boxes"],
+                    (target["orig_size"][1], target["orig_size"][0]),
+                    (samples[idx].shape[-1], samples[idx].shape[-2]),
+                ),
+                "labels": target["labels"],
+            }
+            
+            if "keypoints" in target:
+                gt_item["keypoints"] = scale_keypoints(
+                    target["keypoints"],
+                    (target["orig_size"][1], target["orig_size"][0]),
+                    (samples[idx].shape[-1], samples[idx].shape[-2]),
+                )
+
+            gt.append(gt_item)
+
             labels = (
                 torch.tensor([mscoco_category2label[int(x.item())] for x in result["labels"].flatten()])
                 .to(result["labels"].device)
                 .reshape(result["labels"].shape)
             ) if postprocessor.remap_mscoco_category else result["labels"]
-            preds.append(
-                {"boxes": result["boxes"], "labels": labels, "scores": result["scores"]}
-            )
+            pred_item = {"boxes": result["boxes"], "labels": labels, "scores": result["scores"]}
+            if "keypoints" in result:
+                pred_item["keypoints"] = result["keypoints"]
+            preds.append(pred_item)
 
     # Conf matrix, F1, Precision, Recall, box IoU
     metrics = Validator(gt, preds).compute_metrics()
@@ -255,5 +264,7 @@ def evaluate(
             stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
         if "segm" in iou_types:
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
+        if "keypoints" in iou_types:
+            stats["keypoints"] = coco_evaluator.coco_eval["keypoints"].stats.tolist()
 
     return stats, coco_evaluator

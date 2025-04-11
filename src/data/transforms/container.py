@@ -62,7 +62,7 @@ class Compose(T.Compose):
     def default_forward(self, *inputs: Any) -> Any:
         sample = inputs if len(inputs) > 1 else inputs[0]
         for transform in self.transforms:
-            sample = transform(sample)
+            sample = self._call_transform(transform, sample)
         return sample
 
     def stop_epoch_forward(self, *inputs: Any):
@@ -76,8 +76,7 @@ class Compose(T.Compose):
             if type(transform).__name__ in policy_ops and cur_epoch >= policy_epoch:
                 pass
             else:
-                sample = transform(sample)
-
+                sample = self._call_transform(transform, sample)
         return sample
 
     def stop_sample_forward(self, *inputs: Any):
@@ -92,8 +91,31 @@ class Compose(T.Compose):
             if type(transform).__name__ in policy_ops and self.global_samples >= policy_sample:
                 pass
             else:
-                sample = transform(sample)
+                sample = self._call_transform(transform, sample)
 
         self.global_samples += 1
+
+        return sample
+
+    def _call_transform(self, transform, sample):
+        """
+        This is to ensure the keypoints corresponding to filtered boxes are also filtered out.
+        Once Keypoints are added to TVTensors, this should not be necessary. The transforms should apply
+        to all Keypoint TVTensors internally as they do for BoundingBox TVTensors now.
+        """
+        # Capture original box count and indices before applying transform
+        if isinstance(sample, (list, tuple)) and isinstance(sample[1], dict):
+            target = sample[1]
+            if "boxes" in target and "keypoints" in target:
+                original_boxes = target["boxes"]
+                original_indices = torch.arange(len(original_boxes))
+        
+        sample = transform(sample)
+        
+        if "boxes" in sample[1] and "keypoints" in sample[1]:
+            boxes = sample[1]["boxes"]
+            if len(boxes) < len(original_indices):
+                kept_indices = original_indices[:len(boxes)]
+                sample[1]["keypoints"] = sample[1]["keypoints"][kept_indices]
 
         return sample

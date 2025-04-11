@@ -36,7 +36,7 @@ class DetSolver(BaseSolver):
         n_parameters, model_stats = stats(self.cfg)
         print(model_stats)
         print("-" * 42 + "Start training" + "-" * 43)
-        top1 = 0
+        top1 = -1
         best_stat = {
             "epoch": -1,
         }

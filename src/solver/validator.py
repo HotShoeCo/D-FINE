@@ -345,3 +345,15 @@ def scale_boxes(boxes, orig_shape, resized_shape):
     boxes[:, 1] *= scale_y
     boxes[:, 3] *= scale_y
     return boxes
+
+def scale_keypoints(keypoints, orig_shape, resized_shape):
+    """
+    keypoints in format: [N, K, 3] with (x, y, visibility), absolute values
+    orig_shape: [height, width]
+    resized_shape: [height, width]
+    """
+    scale_x = orig_shape[1] / resized_shape[1]
+    scale_y = orig_shape[0] / resized_shape[0]
+    keypoints[..., 0] *= scale_x
+    keypoints[..., 1] *= scale_y
+    return keypoints

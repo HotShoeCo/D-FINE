@@ -37,11 +37,13 @@ class HungarianMatcher(nn.Module):
             cost_class: This is the relative weight of the classification error in the matching cost
             cost_bbox: This is the relative weight of the L1 error of the bounding box coordinates in the matching cost
             cost_giou: This is the relative weight of the giou loss of the bounding box in the matching cost
+            cost_keypoint: This is the relative weight of the keypoint loss in the matching cost
         """
         super().__init__()
         self.cost_class = weight_dict["cost_class"]
         self.cost_bbox = weight_dict["cost_bbox"]
         self.cost_giou = weight_dict["cost_giou"]
+        self.cost_keypoint = weight_dict["cost_keypoint"]
 
         self.use_focal_loss = use_focal_loss
         self.alpha = alpha
@@ -109,12 +111,19 @@ class HungarianMatcher(nn.Module):
         # Compute the giou cost betwen boxes
         cost_giou = -generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
 
+        # Compute keypoint cost
+        cost_keypoints = self._get_keypoint_cost(outputs, targets)
         # Final cost matrix 3 * self.cost_bbox + 2 * self.cost_class + self.cost_giou
-        C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
+        C = (
+            self.cost_bbox * cost_bbox
+            + self.cost_class * cost_class
+            + self.cost_giou * cost_giou
+            + self.cost_keypoint * cost_keypoints
+        )
         C = C.view(bs, num_queries, -1).cpu()
 
-        sizes = [len(v["boxes"]) for v in targets]
         C = torch.nan_to_num(C, nan=1.0)
+        sizes = [len(v["boxes"]) for v in targets]
         indices_pre = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
         indices = [
             (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
@@ -158,3 +167,37 @@ class HungarianMatcher(nn.Module):
         ]
         # C.copy_(C_original)
         return indices_list
+
+    def _get_keypoint_cost(self, outputs, targets):
+        if not "pred_keypoints" in outputs:
+            return 0
+        
+        pred_kpts = outputs["pred_keypoints"]
+        num_kp = pred_kpts.shape[-2]
+        out_kpts = pred_kpts.float()  # [B, Q, K, 3]
+        tgt_kpts_list = []
+        for t in targets:
+            if "keypoints" in t:
+                tgt_kpts_list.append(t["keypoints"])
+            else:
+                # Create a dummy tensor with shape [K, 3] with all zeros.
+                dummy = torch.zeros(0, num_kp, 3, device=pred_kpts.device)
+                # dummy[:, 2] = 0
+                tgt_kpts_list.append(dummy)
+        tgt_kpts = torch.cat(tgt_kpts_list).float()  # [T, 17, 3]
+
+        # Flatten predictions for cdist-style comparison
+        if out_kpts.dim() == 4:
+            out_kpts = out_kpts.flatten(0, 1)  # [B*Q, 17, 3]
+
+        # Compute pairwise differences
+        pred_exp = out_kpts[:, None, :, :]  # [PQ, 1, K, 3]
+        tgt_exp = tgt_kpts[None, :, :, :]   # [1, T, K, 3]
+
+        # Compute L1 distance for visible keypoints
+        diff = torch.abs(pred_exp[..., :2] - tgt_exp[..., :2])  # [PQ, T, 17, 2]
+
+        # Normalize by visible count per pair
+        cost_kpts = diff.sum(dim=(-1, -2)) / diff.shape[-2]  # [PQ, T]
+
+        return cost_kpts

@@ -37,7 +37,9 @@ class DFINEPostProcessor(nn.Module):
 
     # def forward(self, outputs, orig_target_sizes):
     def forward(self, outputs, orig_target_sizes: torch.Tensor):
-        logits, boxes = outputs["pred_logits"], outputs["pred_boxes"]
+        boxes = outputs["pred_boxes"]
+        keypoints = outputs["pred_keypoints"]
+        logits = outputs["pred_logits"]
         # orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
 
         bbox_pred = torchvision.ops.box_convert(boxes, in_fmt="cxcywh", out_fmt="xyxy")
@@ -51,22 +53,34 @@ class DFINEPostProcessor(nn.Module):
             labels = mod(index, self.num_classes)
             index = index // self.num_classes
             boxes = bbox_pred.gather(
-                dim=1, index=index.unsqueeze(-1).repeat(1, 1, bbox_pred.shape[-1])
+                dim=1, 
+                index=index.unsqueeze(-1).repeat(1, 1, bbox_pred.shape[-1])
             )
-
+            keypoints = torch.stack([
+                kpts[idx] for kpts, idx in zip(keypoints, index)
+            ])
         else:
             scores = F.softmax(logits)[:, :, :-1]
             scores, labels = scores.max(dim=-1)
             if scores.shape[1] > self.num_top_queries:
                 scores, index = torch.topk(scores, self.num_top_queries, dim=-1)
                 labels = torch.gather(labels, dim=1, index=index)
+    
                 boxes = torch.gather(
                     boxes, dim=1, index=index.unsqueeze(-1).tile(1, 1, boxes.shape[-1])
                 )
+    
+                keypoints = torch.stack([
+                    kpts[idx] for kpts, idx in zip(keypoints, index)
+                ])
+
+        # Convert normalized keypoints back to pixel coordinates
+        # Expand to [B, 1, 1, 2] so it broadcasts over [B, N, K, 2]
+        keypoints[..., :2] *= orig_target_sizes[:, None, None, :]
 
         # TODO for onnx export
         if self.deploy_mode:
-            return labels, boxes, scores
+            return labels, boxes, scores, keypoints
 
         # TODO
         if self.remap_mscoco_category:
@@ -78,11 +92,7 @@ class DFINEPostProcessor(nn.Module):
                 .reshape(labels.shape)
             )
 
-        results = []
-        for lab, box, sco in zip(labels, boxes, scores):
-            result = dict(labels=lab, boxes=box, scores=sco)
-            results.append(result)
-
+        results = [dict(labels=lab, boxes=box, scores=sco, keypoints=kpt) for lab, box, sco, kpt in zip(labels, boxes, scores, keypoints)]
         return results
 
     def deploy(

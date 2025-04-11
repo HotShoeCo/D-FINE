@@ -66,6 +66,9 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
                 target["boxes"], key="boxes", spatial_size=image.size[::-1]
             )
 
+        if "keypoints" in target:
+            target["keypoints"] = self._prepare_keypoints(target["keypoints"], image.width, image.height)
+
         if "masks" in target:
             target["masks"] = convert_to_tv_tensor(target["masks"], key="masks")
 
@@ -103,6 +106,15 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         self,
     ):
         return {i: cat["id"] for i, cat in enumerate(self.categories)}
+    
+    def _prepare_keypoints(self, tensor: torch.Tensor, width: float, height: float) -> torch.Tensor:
+        """
+        Reshapes the keypoints.
+        """
+        # Coco points are (x, y, v), input tensor shape is [N, 3 * num_keypoints]
+        num_keypoints = tensor.shape[-1] // 3
+        # Reshape to [N, num_keypoints, 3]
+        return tensor.view(tensor.shape[0], num_keypoints, 3)
 
 
 def convert_coco_poly_to_mask(segmentations, height, width):
@@ -161,15 +173,13 @@ class ConvertCocoPolysToMask(object):
         if anno and "keypoints" in anno[0]:
             keypoints = [obj["keypoints"] for obj in anno]
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
-            num_keypoints = keypoints.shape[0]
-            if num_keypoints:
-                keypoints = keypoints.view(num_keypoints, -1, 3)
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
         labels = labels[keep]
         if self.return_masks:
             masks = masks[keep]
+
         if keypoints is not None:
             keypoints = keypoints[keep]
 
@@ -180,6 +190,7 @@ class ConvertCocoPolysToMask(object):
             target["masks"] = masks
         target["image_id"] = image_id
         target["image_path"] = image_path
+
         if keypoints is not None:
             target["keypoints"] = keypoints
 

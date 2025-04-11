@@ -136,6 +136,34 @@ class DFINECriterion(nn.Module):
 
         return losses
 
+    def loss_keypoints(self, outputs, targets, indices, num_boxes):
+        """Compute L1 loss for keypoint predictions."""
+        assert "pred_keypoints" in outputs, "Keypoint predictions not found in outputs"
+        batch_idx, src_idx = self._get_src_permutation_idx(indices)
+        src_keypoints = outputs["pred_keypoints"][batch_idx, src_idx]
+
+        # Determine the number of keypoints from the prediction tensor.
+        # outputs["pred_keypoints"] is expected to have shape [batch_size, num_queries, num_keypoints, 3].
+        num_kp = outputs["pred_keypoints"].shape[-2]
+
+        # Gather target keypoints for matched indices.
+        # Each t["keypoints"] is expected to be of shape [num_objects, num_keypoints, 3].
+        # If a target does not have keypoints, create a dummy tensor of zeros.
+        target_keypoints_list = []
+        for t, (_, i) in zip(targets, indices):
+            if "keypoints" in t:
+                target_keypoints_list.append(t["keypoints"][i])
+            else:
+                # Create a dummy tensor of zeros with shape [num_matched, num_keypoints, 3]
+                dummy = torch.zeros(len(i), num_kp, 3, device=outputs["pred_keypoints"].device)
+                target_keypoints_list.append(dummy)
+
+        target_keypoints = torch.cat(target_keypoints_list, dim=0)
+        loss = F.l1_loss(src_keypoints, target_keypoints, reduction="none")
+        loss = loss.sum() / num_boxes
+        return {"loss_keypoints": loss}
+
+    
     def loss_local(self, outputs, targets, indices, num_boxes, T=5):
         """Compute Fine-Grained Localization (FGL) Loss
         and Decoupled Distillation Focal (DDF) Loss."""
@@ -276,6 +304,7 @@ class DFINECriterion(nn.Module):
             "focal": self.loss_labels_focal,
             "vfl": self.loss_labels_vfl,
             "local": self.loss_local,
+            "keypoints": self.loss_keypoints,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
