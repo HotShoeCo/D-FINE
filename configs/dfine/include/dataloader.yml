@@ -12,6 +12,7 @@ train_dataloader:
         - {type: SanitizeBoundingBoxes, min_size: 1}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
         - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+        - {type: NormalizeKeyPoints }
       policy:
         name: stop_epoch
         epoch: 72 # epoch in [71, ~) stop `ops`
@@ -34,6 +35,8 @@ val_dataloader:
       ops:
         - {type: Resize, size: [640, 640], }
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+        - {type: NormalizeKeyPoints }
   shuffle: False
   total_batch_size: 64
   num_workers: 4

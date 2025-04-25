@@ -16,6 +16,7 @@ import torchvision.transforms.v2.functional as F
 from ...core import register
 from .._misc import (
     BoundingBoxes,
+    KeyPoints,
     Image,
     Mask,
     SanitizeBoundingBoxes,
@@ -23,6 +24,7 @@ from .._misc import (
     _boxes_keys,
     convert_to_tv_tensor,
 )
+from torchvision.tv_tensors import wrap
 
 torchvision.disable_beta_transforms_warning()
 
@@ -59,6 +61,7 @@ class PadToSize(T.Pad):
         Video,
         Mask,
         BoundingBoxes,
+        KeyPoints,
     )
 
     def _get_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
@@ -87,6 +90,8 @@ class PadToSize(T.Pad):
 
 @register()
 class RandomIoUCrop(T.RandomIoUCrop):
+    _transformed_types = (PIL.Image.Image, Image, Video, Mask, BoundingBoxes, KeyPoints)
+
     def __init__(
         self,
         min_scale: float = 0.3,
@@ -153,3 +158,21 @@ class ConvertPILImage(T.Transform):
         inpt = Image(inpt)
 
         return inpt
+
+
+@register()
+class NormalizeKeyPoints(T.Transform):
+    _transformed_types = (KeyPoints,)
+
+    def __init__(self) -> None:
+        super().__init__()
+    
+    def transform(self, inpt: KeyPoints, params: Dict[str, Any]) -> KeyPoints:
+        # Normalize x/y from [0, image_size] to [0, 1] using canvas_size
+        height, width = inpt.canvas_size
+        scale = torch.tensor([width, height], device=inpt.device)
+        norm_data = inpt / scale
+
+        # Rewrap with the same class, preserving canvas_size
+        return wrap(norm_data, like=inpt)
+

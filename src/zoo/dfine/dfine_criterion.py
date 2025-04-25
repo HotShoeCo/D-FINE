@@ -15,6 +15,7 @@ import torch.nn.functional as F
 import torchvision
 
 from ...core import register
+from ...data.coco_keypoints import CocoKeyPoints
 from ...misc.dist_utils import get_world_size, is_dist_available_and_initialized
 from .box_ops import box_cxcywh_to_xyxy, box_iou, generalized_box_iou
 from .dfine_utils import bbox2distance
@@ -87,7 +88,7 @@ class DFINECriterion(nn.Module):
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         if values is None:
-            src_boxes = outputs["pred_boxes"][idx]
+            src_boxes = outputs["pred_boxes"][idx]                
             target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
             ious, _ = box_iou(box_cxcywh_to_xyxy(src_boxes), box_cxcywh_to_xyxy(target_boxes))
             ious = torch.diag(ious).detach()
@@ -141,6 +142,8 @@ class DFINECriterion(nn.Module):
         assert "pred_keypoints" in outputs, "Keypoint predictions not found in outputs"
         batch_idx, src_idx = self._get_src_permutation_idx(indices)
         src_keypoints = outputs["pred_keypoints"][batch_idx, src_idx]
+        src_keypoints_full = outputs["pred_keypoints"][batch_idx, src_idx]
+        src_keypoints, src_visibility = src_keypoints_full[..., :2], src_keypoints_full[..., 2:]
 
         # Determine the number of keypoints from the prediction tensor.
         # outputs["pred_keypoints"] is expected to have shape [batch_size, num_queries, num_keypoints, 3].
@@ -154,13 +157,15 @@ class DFINECriterion(nn.Module):
             if "keypoints" in t:
                 target_keypoints_list.append(t["keypoints"][i])
             else:
-                # Create a dummy tensor of zeros with shape [num_matched, num_keypoints, 3]
-                dummy = torch.zeros(len(i), num_kp, 3, device=outputs["pred_keypoints"].device)
-                target_keypoints_list.append(dummy)
+                # Create a dummy tensor of zeros with shape [num_matched, num_keypoints, 2]
+                zeroes = torch.zeros(len(i), num_kp, 2, device=outputs["pred_keypoints"].device)
+                zero_keypoint = CocoKeyPoints(zeroes, canvas_size=[0, 0])
+                target_keypoints_list.append(zero_keypoint)
 
         target_keypoints = torch.cat(target_keypoints_list, dim=0)
         loss = F.l1_loss(src_keypoints, target_keypoints, reduction="none")
-        loss = loss.sum() / num_boxes
+        # Calc loss as an average of per-keypoint coordinate.
+        loss = loss.sum() / (num_boxes * num_kp * 2)
         return {"loss_keypoints": loss}
 
     

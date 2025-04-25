@@ -4,21 +4,29 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
 import importlib.metadata
+import torchvision
 
+from packaging import version
 from torch import Tensor
+from .coco_keypoints import CocoKeyPoints
 
-tv_ver = importlib.metadata.version("torchvision")
+tv_version = importlib.metadata.version("torchvision")
+has_keypoints = False
 
-if tv_ver >= "0.16":
-    import torchvision
+
+if tv_version >= "0.22":
+    from torchvision.tv_tensors import KeyPoints
+    has_keypoints = True
+
+
+if tv_version >= "0.16":
     torchvision.disable_beta_transforms_warning()
 
     from torchvision.transforms.v2 import SanitizeBoundingBoxes
     from torchvision.tv_tensors import BoundingBoxes, BoundingBoxFormat, Image, Mask, Video
 
     _boxes_keys = ["format", "canvas_size"]
-elif tv_ver >= "0.15.2":
-    import torchvision
+elif tv_version >= "0.15.2":
     torchvision.disable_beta_transforms_warning()
 
     from torchvision.datapoints import BoundingBox as BoundingBoxes, BoundingBoxFormat, Image, Mask, Video
@@ -28,6 +36,7 @@ elif tv_ver >= "0.15.2":
 
 else:
     raise RuntimeError("Please make sure torchvision version >= 0.15.2")
+
 
 
 def convert_to_tv_tensor(tensor: Tensor, key: str, box_format="xyxy", spatial_size=None) -> Tensor:
@@ -41,13 +50,21 @@ def convert_to_tv_tensor(tensor: Tensor, key: str, box_format="xyxy", spatial_si
     """
     assert key in (
         "boxes",
+        "keypoints",
         "masks",
-    ), "Only support 'boxes' and 'masks'"
+    ), "Only support 'boxes', 'keypoints' and 'masks'"
 
     if key == "boxes":
         box_format = getattr(BoundingBoxFormat, box_format.upper())
         _kwargs = dict(zip(_boxes_keys, [box_format, spatial_size]))
         return BoundingBoxes(tensor, **_kwargs)
 
+    if key == "keypoints":
+        if has_keypoints:
+            return CocoKeyPoints(tensor, canvas_size=spatial_size)
+        
+        # Pass through
+        return tensor
+    
     if key == "masks":
         return Mask(tensor)

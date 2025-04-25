@@ -17,6 +17,8 @@ from ...core import register
 from .._misc import convert_to_tv_tensor
 from ._dataset import DetDataset
 
+from torchvision.tv_tensors import wrap
+
 torchvision.disable_beta_transforms_warning()
 faster_coco_eval.init_as_pycocotools()
 Image.MAX_IMAGE_PIXELS = None
@@ -60,14 +62,14 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
             image, target = self.prepare(image, target)
 
         target["idx"] = torch.tensor([idx])
+        spatial_size = image.size[::-1]
 
         if "boxes" in target:
-            target["boxes"] = convert_to_tv_tensor(
-                target["boxes"], key="boxes", spatial_size=image.size[::-1]
-            )
+            target["boxes"] = convert_to_tv_tensor(target["boxes"], key="boxes", spatial_size=spatial_size)
 
         if "keypoints" in target:
-            target["keypoints"] = self._prepare_keypoints(target["keypoints"], image.width, image.height)
+            keypoints = self._prepare_keypoints(target["keypoints"])
+            target["keypoints"] = convert_to_tv_tensor(keypoints, key="keypoints", spatial_size=spatial_size)
 
         if "masks" in target:
             target["masks"] = convert_to_tv_tensor(target["masks"], key="masks")
@@ -81,7 +83,7 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
             s += f" transforms:\n   {repr(self._transforms)}"
         if hasattr(self, "_preset") and self._preset is not None:
             s += f" preset:\n   {repr(self._preset)}"
-        return s
+        return s 
 
     @property
     def categories(
@@ -107,13 +109,13 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
     ):
         return {i: cat["id"] for i, cat in enumerate(self.categories)}
     
-    def _prepare_keypoints(self, tensor: torch.Tensor, width: float, height: float) -> torch.Tensor:
+    def _prepare_keypoints(self, tensor: torch.Tensor) -> torch.Tensor:
         """
         Reshapes the keypoints.
         """
         # Coco points are (x, y, v), input tensor shape is [N, 3 * num_keypoints]
         num_keypoints = tensor.shape[-1] // 3
-        # Reshape to [N, num_keypoints, 3]
+        # [N, K, 3]
         return tensor.view(tensor.shape[0], num_keypoints, 3)
 
 

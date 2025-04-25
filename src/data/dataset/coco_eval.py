@@ -13,8 +13,8 @@ import os
 import faster_coco_eval.core.mask as mask_util
 import numpy as np
 import torch
-from faster_coco_eval import COCO, COCOeval_faster
 
+from faster_coco_eval import COCO, COCOeval_faster
 from ...core import register
 from ...misc import dist_utils
 
@@ -166,11 +166,18 @@ class CocoEvaluator(object):
             if len(prediction) == 0:
                 continue
 
-            boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
             keypoints = prediction["keypoints"]
+            # Ensure visibility values are valid (0, 1, 2).
+            keypoints = keypoints.clone()
+            v = keypoints[..., 2]
+            v = torch.where(
+                v >= 0.75,
+                torch.tensor(2.0, device=v.device),
+                torch.where(v >= 0.5, torch.tensor(1.0, device=v.device), torch.tensor(0.0, device=v.device))
+            )
+            keypoints[..., 2] = v
             keypoints = keypoints.flatten(start_dim=1).tolist()
 
             coco_results.extend(
@@ -179,6 +186,7 @@ class CocoEvaluator(object):
                         "image_id": original_id,
                         "category_id": labels[k],
                         "keypoints": keypoint,
+                        "num_keypoints": sum(1 for i in range(2, len(keypoint), 3) if keypoint[i] > 0),
                         "score": scores[k],
                     }
                     for k, keypoint in enumerate(keypoints)
