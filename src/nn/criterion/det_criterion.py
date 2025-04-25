@@ -33,7 +33,7 @@ class DetCriterion(torch.nn.Module):
         Args:
             losses (list[str]): requested losses, support ['boxes', 'vfl', 'focal']
             weight_dict (dict[str, float)]: corresponding losses weight, including
-                ['loss_bbox', 'loss_keypoints', 'loss_giou', 'loss_vfl', 'loss_focal']
+                ['loss_bbox', 'loss_giou', 'loss_vfl', 'loss_focal']
             box_fmt (str): in box format, 'cxcywh' or 'xyxy'
             matcher (Matcher): matcher used to match source to target
         """
@@ -177,26 +177,12 @@ class DetCriterion(torch.nn.Module):
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
 
-    def loss_keypoints(self, outputs, targets, indices, num_boxes):
-        # Ensure keypoint predictions exist in the outputs.
-        assert "pred_keypoints" in outputs, "Expected keypoint predictions (pred_keypoints) in outputs."
-        idx = self._get_src_permutation_idx(indices)
-        # Extract predicted keypoints using the matcher indices.
-        src_keypoints = outputs["pred_keypoints"][idx]
-        # Construct ground truth keypoints tensor.
-        target_keypoints = torch.cat([t["keypoints"][i] for t, (_, i) in zip(targets, indices)], dim=0)
-        # Compute L1 loss (mean absolute error) and normalize by the number of keypoints.
-        loss_keypoints = F.l1_loss(src_keypoints, target_keypoints, reduction="none")
-        loss_keypoints = loss_keypoints.sum() / num_boxes
-        return {"loss_keypoints": loss_keypoints}
-
     def get_loss(self, loss, outputs, targets, indices, num_boxes, **kwargs):
         loss_map = {
             "boxes": self.loss_boxes,
             "giou": self.loss_boxes_giou,
             "vfl": self.loss_labels_vfl,
             "focal": self.loss_labels_focal,
-            "keypoints": self.loss_keypoints,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)

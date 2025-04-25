@@ -68,8 +68,7 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
             target["boxes"] = convert_to_tv_tensor(target["boxes"], key="boxes", spatial_size=spatial_size)
 
         if "keypoints" in target:
-            keypoints = self._prepare_keypoints(target["keypoints"])
-            target["keypoints"] = convert_to_tv_tensor(keypoints, key="keypoints", spatial_size=spatial_size)
+            target["keypoints"] = convert_to_tv_tensor(target["keypoints"], key="keypoints", spatial_size=spatial_size)
 
         if "masks" in target:
             target["masks"] = convert_to_tv_tensor(target["masks"], key="masks")
@@ -108,15 +107,6 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         self,
     ):
         return {i: cat["id"] for i, cat in enumerate(self.categories)}
-    
-    def _prepare_keypoints(self, tensor: torch.Tensor) -> torch.Tensor:
-        """
-        Reshapes the keypoints.
-        """
-        # Coco points are (x, y, v), input tensor shape is [N, 3 * num_keypoints]
-        num_keypoints = tensor.shape[-1] // 3
-        # [N, K, 3]
-        return tensor.view(tensor.shape[0], num_keypoints, 3)
 
 
 def convert_coco_poly_to_mask(segmentations, height, width):
@@ -175,6 +165,9 @@ class ConvertCocoPolysToMask(object):
         if anno and "keypoints" in anno[0]:
             keypoints = [obj["keypoints"] for obj in anno]
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
+            num_keypoints = keypoints.shape[0]
+            if num_keypoints:
+                 keypoints = keypoints.view(num_keypoints, -1, 3)
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
