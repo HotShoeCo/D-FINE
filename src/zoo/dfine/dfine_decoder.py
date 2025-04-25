@@ -18,6 +18,7 @@ import torch.nn.functional as F
 import torch.nn.init as init
 
 from ...core import register
+from ...data.dataset.coco_dataset import category_keypoint_layouts
 from .denoising import get_contrastive_denoising_training_group
 from .dfine_utils import distance2bbox, weighting_function
 from .utils import (
@@ -500,7 +501,6 @@ class DFINETransformer(nn.Module):
         reg_max=32,
         reg_scale=4.0,
         layer_scale=1,
-        num_keypoints=17,
     ):
         super().__init__()
         assert len(feat_channels) <= num_levels
@@ -521,6 +521,7 @@ class DFINETransformer(nn.Module):
         self.eval_spatial_size = eval_spatial_size
         self.aux_loss = aux_loss
         self.reg_max = reg_max
+        self.num_keypoints = max(layout["num_keypoints"] for layout in category_keypoint_layouts.values())
 
         assert query_select_method in ("default", "one2many", "agnostic"), ""
         assert cross_attn_method in ("default", "discrete"), ""
@@ -606,7 +607,7 @@ class DFINETransformer(nn.Module):
             self.enc_score_head = nn.Linear(hidden_dim, num_classes)
 
         self.enc_bbox_head = MLP(hidden_dim, hidden_dim, 4, 3)
-        self.enc_keypoint_head = MLP(hidden_dim, hidden_dim, num_keypoints * 3, 3)
+        self.enc_keypoint_head = MLP(hidden_dim, hidden_dim, self.num_keypoints * 3, 3)
 
         # decoder head
         self.eval_idx = eval_idx if eval_idx >= 0 else num_layers + eval_idx
@@ -625,15 +626,14 @@ class DFINETransformer(nn.Module):
                 for _ in range(num_layers - self.eval_idx - 1)
             ]
         )
-        self.num_keypoints = num_keypoints
-        self.pre_keypoint_head = MLP(hidden_dim, hidden_dim, num_keypoints * 3, 3)
+        self.pre_keypoint_head = MLP(hidden_dim, hidden_dim, self.num_keypoints * 3, 3)
         self.dec_keypoints_head = nn.ModuleList(
             [
-                MLP(hidden_dim, hidden_dim, num_keypoints * 3, 3)
+                MLP(hidden_dim, hidden_dim, self.num_keypoints * 3, 3)
                 for _ in range(self.eval_idx + 1)
             ]
             + [
-                MLP(scaled_dim, scaled_dim, num_keypoints * 3, 3)
+                MLP(scaled_dim, scaled_dim, self.num_keypoints * 3, 3)
                 for _ in range(num_layers - self.eval_idx - 1)
             ]
         )

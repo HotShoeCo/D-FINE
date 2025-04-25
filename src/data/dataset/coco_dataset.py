@@ -286,3 +286,7 @@ mscoco_category2name = {
 
 mscoco_category2label = {k: i for i, k in enumerate(mscoco_category2name.keys())}
 mscoco_label2category = {v: k for k, v in mscoco_category2label.items()}
+
+category_keypoint_layouts = {
+    1: { "num_keypoints": 17 },
+}

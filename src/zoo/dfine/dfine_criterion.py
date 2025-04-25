@@ -16,6 +16,7 @@ import torchvision
 
 from ...core import register
 from ...data.coco_keypoints import CocoKeyPoints
+from ...data.dataset.coco_dataset import category_keypoint_layouts, mscoco_label2category
 from ...misc.dist_utils import get_world_size, is_dist_available_and_initialized
 from .box_ops import box_cxcywh_to_xyxy, box_iou, generalized_box_iou
 from .dfine_utils import bbox2distance
@@ -138,34 +139,50 @@ class DFINECriterion(nn.Module):
         return losses
 
     def loss_keypoints(self, outputs, targets, indices, num_boxes):
-        """Compute L1 loss for keypoint predictions."""
         assert "pred_keypoints" in outputs, "Keypoint predictions not found in outputs"
         batch_idx, src_idx = self._get_src_permutation_idx(indices)
-        src_keypoints = outputs["pred_keypoints"][batch_idx, src_idx]
+
         src_keypoints_full = outputs["pred_keypoints"][batch_idx, src_idx]
         src_keypoints, src_visibility = src_keypoints_full[..., :2], src_keypoints_full[..., 2:]
 
-        # Determine the number of keypoints from the prediction tensor.
-        # outputs["pred_keypoints"] is expected to have shape [batch_size, num_queries, num_keypoints, 3].
-        num_kp = outputs["pred_keypoints"].shape[-2]
+        selected_src_keypoints = []
+        selected_tgt_keypoints = []
+        num_valid_keypoints = 0
 
-        # Gather target keypoints for matched indices.
-        # Each t["keypoints"] is expected to be of shape [num_objects, num_keypoints, 3].
-        # If a target does not have keypoints, create a dummy tensor of zeros.
-        target_keypoints_list = []
-        for t, (_, i) in zip(targets, indices):
-            if "keypoints" in t:
-                target_keypoints_list.append(t["keypoints"][i])
+        for t, (_, matched_indices) in zip(targets, indices):
+            labels = t["labels"][matched_indices]
+            if "keypoints" not in t:
+                # Fill dummy zero tensor if missing
+                dummy_keypoints = torch.zeros(
+                    (t["labels"].shape[0], outputs["pred_keypoints"].shape[-2], 3),
+                    dtype=outputs["pred_keypoints"].dtype,
+                    device=outputs["pred_keypoints"].device,
+                )
+                target_keypoints = dummy_keypoints[matched_indices]
             else:
-                # Create a dummy tensor of zeros with shape [num_matched, num_keypoints, 2]
-                zeroes = torch.zeros(len(i), num_kp, 2, device=outputs["pred_keypoints"].device)
-                zero_keypoint = CocoKeyPoints(zeroes, canvas_size=[0, 0])
-                target_keypoints_list.append(zero_keypoint)
+                target_keypoints = t["keypoints"][matched_indices]
 
-        target_keypoints = torch.cat(target_keypoints_list, dim=0)
-        loss = F.l1_loss(src_keypoints, target_keypoints, reduction="none")
-        # Calc loss as an average of per-keypoint coordinate.
-        loss = loss.sum() / (num_boxes * num_kp * 2)
+            for label, tgt_kpt, pred_kpt in zip(labels, target_keypoints, src_keypoints):
+                coco_category_id = mscoco_label2category[label.item()]
+                layout = category_keypoint_layouts.get(coco_category_id, {"num_keypoints": 0})
+                n_kpt = layout["num_keypoints"]
+
+                if n_kpt > 0:
+                    selected_src_keypoints.append(pred_kpt[:n_kpt])
+                    selected_tgt_keypoints.append(tgt_kpt[:n_kpt])
+                    num_valid_keypoints += n_kpt
+
+        if num_valid_keypoints == 0:
+            # No valid keypoints, return zero loss
+            return {"loss_keypoints": src_keypoints.sum() * 0}
+
+        src_kpts_tensor = torch.cat(selected_src_keypoints, dim=0)
+        tgt_kpts_tensor = torch.cat(selected_tgt_keypoints, dim=0)
+
+        loss = F.l1_loss(src_kpts_tensor, tgt_kpts_tensor, reduction="sum")
+        # Normalize by total number of keypoint coordinates (x and y)
+        loss = loss / (num_valid_keypoints * 2)
+
         return {"loss_keypoints": loss}
 
     

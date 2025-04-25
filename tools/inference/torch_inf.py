@@ -10,72 +10,81 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
-from PIL import Image, ImageDraw
+from PIL import Image
+from torchvision.utils import draw_bounding_boxes, draw_keypoints
+import torchvision.transforms.functional as F
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.core import YAMLConfig
 from src.data.dataset.coco_dataset import mscoco_category2name
 
 
+def draw_keypoints_on_image(image_tensor, keypoints_tensor, threshold=0.5):
+    """
+    Draw keypoints using torchvision's draw_keypoints correctly.
+    image_tensor: Tensor (3, H, W)
+    keypoints_tensor: (N, num_keypoints, 3)
+    """
+    xy = keypoints_tensor[..., :2]  # (N, K, 2)
+    conf = keypoints_tensor[..., 2]  # (N, K)
+
+    visibility = conf > threshold  # (N, K)
+
+    result = draw_keypoints(
+        image_tensor,
+        xy,
+        visibility=visibility,
+        radius=5,
+        colors="red",
+    )
+    return result
+
+
 def draw(images, labels, boxes, scores, keypoints=[], thrh=0.4, names_dict=None):
-    DRAW_COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'cyan', 'magenta']
     COCO_CLASSES = mscoco_category2name.values()
     if names_dict is None:
         names_dict = {i: name for i, name in enumerate(COCO_CLASSES)}
-    
+
     for i, im in enumerate(images):
-        draw_obj = ImageDraw.Draw(im)
+        # Convert image to tensor and ensure uint8 type for drawing
+        if isinstance(im, Image.Image):
+            image_tensor = F.to_tensor(im)
+            image_tensor = (image_tensor * 255).to(torch.uint8)
+        else:
+            image_tensor = im
+            if image_tensor.dtype != torch.uint8:
+                image_tensor = (image_tensor * 255).to(torch.uint8)
 
         scr = scores[i]
-        lab = labels[i][scr > thrh]
-        box = boxes[i][scr > thrh]
-        scrs = scr[scr > thrh]
+        keep = scr > thrh
 
-        if i < len(keypoints):
-            kpts = keypoints[i][scr > thrh]
-        else:
-            kpts = None
+        lab = labels[i][keep]
+        box = boxes[i][keep]
+        scrs = scr[keep]
 
-        # Boxes
-        for j, b in enumerate(box):
-            color = DRAW_COLORS[j % len(DRAW_COLORS)]
-            draw_obj.rectangle(list(b), outline=color)
+        has_keypoints = keypoints is not None and i < len(keypoints)
+        kpts = keypoints[i][keep] if has_keypoints else None
+
+        labels_list = []
+        for j in range(len(lab)):
             label_id = lab[j].item()
             label_name = names_dict.get(label_id, str(label_id))
             text = f"{label_name} {round(scrs[j].item(), 2)}"
-            padding = 2
-            bbox = draw_obj.textbbox((0, 0), text)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            # Label bg
-            draw_obj.rectangle([b[0], b[1], b[0] + text_w + 2*padding, b[1] + text_h + 2*padding], fill=color)
-            # Label text
-            draw_obj.text((b[0] + padding, b[1] + padding), text, fill="black")
+            labels_list.append(text)
 
-            # Keypoints
-            if kpts is not None:
-                draw_keypoints(draw_obj, im.size, kpts[j], color)
+        if len(box) > 0:
+            image_tensor = draw_bounding_boxes(
+                image_tensor,
+                box,
+                labels=labels_list,
+                width=2,
+                font_size=12,
+            )
 
+        if kpts is not None and len(kpts) > 0:
+            image_tensor = draw_keypoints_on_image(image_tensor, kpts)
 
-def draw_keypoints(draw_obj, image_size, keypoints, color, dot_radius=5):
-    """Draw keypoints on the given image. Expects keypoints as a tensor of shape (1, N, num_keypoints*3) or (N, num_keypoints*3) or (N, num_keypoints, 3).
-
-    Each detection's keypoints are processed so that if they are not already of shape (num_keypoints, 3), they are reshaped.
-    Only keypoints with confidence above the threshold are drawn.
-    """
-    # Get image dimensions
-    w, h = image_size
-    num_kp = keypoints.shape[0] // 3
-    kp_arr = keypoints.reshape(num_kp, 3)
-    print(kp_arr)
-        # # If keypoints appear to be normalized (e.g. in the range [0,1]), scale them by image width and height
-        # if kp_arr.min() >= 0 and kp_arr.max() <= 1.1:
-        #     kp_arr[:, 0] = kp_arr[:, 0] * w
-        #     kp_arr[:, 1] = kp_arr[:, 1] * h
-        
-    for x, y, conf in kp_arr:
-        print(x, y, conf)
-        draw_obj.ellipse((x - dot_radius, y - dot_radius, x + dot_radius, y + dot_radius), fill=color)
+        images[i] = F.to_pil_image(image_tensor)
 
 
 def process_image(model, device, file_path):
@@ -98,8 +107,9 @@ def process_image(model, device, file_path):
         labels, boxes, scores = output
         keypoints = []
 
-    draw([im_pil], labels, boxes, scores, keypoints)
-    im_pil.save("torch_results.jpg")
+    images = [im_pil]
+    draw(images, labels, boxes, scores, keypoints)
+    images[0].save("torch_results.jpg")
 
 
 def process_video(model, device, file_path):
@@ -144,10 +154,7 @@ def process_video(model, device, file_path):
             keypoints = None
 
         # Draw detections on the frame
-        draw([frame_pil], labels, boxes, scores)
-        if keypoints is not None:
-            draw_keypoints(frame_pil, keypoints)
-
+        draw([frame_pil], labels, boxes, scores, keypoints if keypoints is not None else [])
         # Convert back to OpenCV image
         frame = cv2.cvtColor(np.array(frame_pil), cv2.COLOR_RGB2BGR)
 
