@@ -180,21 +180,17 @@ class HungarianMatcher(nn.Module):
             return None
 
         pred_kpts = outputs["pred_keypoints"]
-        num_kp = pred_kpts.shape[-2]
-        out_kpts = pred_kpts.float()  # [B, Q, K, 3]
+        out_kpts = pred_kpts.float()  # [B, Q, K, 2]
 
-        tgt_kpts_list = []
-        for t in targets:
-            if "keypoints" in t and t["keypoints"].shape[0] == t["boxes"].shape[0]:
-                tgt_kpts_list.append(t["keypoints"])
-            else:
-                dummy_kpts = KeyPoints(torch.zeros((t["boxes"].shape[0], num_kp, 2), device=pred_kpts.device), canvas_size=(1, 1))
-                tgt_kpts_list.append(dummy_kpts)
+        # Only collect targets that have keypoints
+        tgt_kpts_list = [t["keypoints"] for t in targets if "keypoints" in t and t["keypoints"].numel() > 0]
+        if len(tgt_kpts_list) == 0:
+            return None
 
         tgt_kpts = torch.cat(tgt_kpts_list).float()
 
         if out_kpts.dim() == 4:
-            out_kpts = out_kpts.flatten(0, 1)  # [B*Q, K, 3]
+            out_kpts = out_kpts.flatten(0, 1)  # [B*Q, K, 2]
 
         pred_exp = out_kpts[:, None, :, :2]
         tgt_exp = tgt_kpts[None, :, :, :]

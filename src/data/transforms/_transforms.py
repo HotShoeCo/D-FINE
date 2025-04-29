@@ -16,8 +16,8 @@ import torchvision.transforms.v2.functional as F
 from ...core import register
 from .._misc import (
     BoundingBoxes,
-    KeyPoints,
     Image,
+    KeyPoints,
     Mask,
     SanitizeBoundingBoxes,
     Video,
@@ -36,7 +36,7 @@ Resize = register()(T.Resize)
 # ToImageTensor = register()(T.ToImageTensor)
 # ConvertDtype = register()(T.ConvertDtype)
 # PILToTensor = register()(T.PILToTensor)
-SanitizeBoundingBoxes = register(name="SanitizeBoundingBoxes")(SanitizeBoundingBoxes)
+# SanitizeBoundingBoxes = register(name="SanitizeBoundingBoxes")(SanitizeBoundingBoxes)
 RandomCrop = register()(T.RandomCrop)
 Normalize = register()(T.Normalize)
 
@@ -159,7 +159,6 @@ class ConvertPILImage(T.Transform):
 
         return inpt
 
-
 @register()
 class NormalizeKeyPoints(T.Transform):
     _transformed_types = (KeyPoints,)
@@ -168,11 +167,24 @@ class NormalizeKeyPoints(T.Transform):
         super().__init__()
     
     def transform(self, inpt: KeyPoints, params: Dict[str, Any]) -> KeyPoints:
-        # Normalize x/y from [0, image_size] to [0, 1] using canvas_size
         height, width = inpt.canvas_size
         scale = torch.tensor([width, height], device=inpt.device)
-        norm_data = inpt / scale
+        return KeyPoints(inpt / scale, canvas_size=inpt.canvas_size)
 
-        # Rewrap with the same class, preserving canvas_size
-        return wrap(norm_data, like=inpt)
+@register(name="SanitizeBoundingBoxesWithKeyPoints")
+class SanitizeBoundingBoxesWithKeyPoints(T.SanitizeBoundingBoxes):
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        is_label = params["labels"] is not None and any(inpt is label for label in params["labels"])
+        is_bounding_boxes_or_mask_or_keypoints = isinstance(
+            inpt, (BoundingBoxes, Mask, KeyPoints)
+        )
 
+        if not (is_label or is_bounding_boxes_or_mask_or_keypoints):
+            return inpt
+
+        output = inpt[params["valid"]]
+        if is_label:
+            return output
+        else:
+            wrapped = wrap(output, like=inpt)
+            return wrapped

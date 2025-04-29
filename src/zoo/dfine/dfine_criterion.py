@@ -15,7 +15,6 @@ import torch.nn.functional as F
 import torchvision
 
 from ...core import register
-from ...data.coco_keypoints import CocoKeyPoints
 from ...data.dataset.coco_dataset import category_keypoint_layouts, mscoco_label2category
 from ...misc.dist_utils import get_world_size, is_dist_available_and_initialized
 from .box_ops import box_cxcywh_to_xyxy, box_iou, generalized_box_iou
@@ -142,26 +141,20 @@ class DFINECriterion(nn.Module):
         assert "pred_keypoints" in outputs, "Keypoint predictions not found in outputs"
         batch_idx, src_idx = self._get_src_permutation_idx(indices)
 
-        src_keypoints_full = outputs["pred_keypoints"][batch_idx, src_idx]
-        src_keypoints, src_visibility = src_keypoints_full[..., :2], src_keypoints_full[..., 2:]
-
+        src_keypoints = outputs["pred_keypoints"][batch_idx, src_idx]
         selected_src_keypoints = []
         selected_tgt_keypoints = []
         num_valid_keypoints = 0
 
         for t, (_, matched_indices) in zip(targets, indices):
-            labels = t["labels"][matched_indices]
             if "keypoints" not in t:
-                # Fill dummy zero tensor if missing
-                dummy_keypoints = torch.zeros(
-                    (t["labels"].shape[0], outputs["pred_keypoints"].shape[-2], 3),
-                    dtype=outputs["pred_keypoints"].dtype,
-                    device=outputs["pred_keypoints"].device,
-                )
-                target_keypoints = dummy_keypoints[matched_indices]
-            else:
-                target_keypoints = t["keypoints"][matched_indices]
+                continue 
 
+            labels = t["labels"][matched_indices]
+            target_keypoints = t["keypoints"][matched_indices]
+
+            # KeyPoints need to be sliced down to the number of keypoints that matter per category.
+            # (e.g., Person has 17 keypoints, but an object like a golf club may have 5, so only 5 keypoints matter.)
             for label, tgt_kpt, pred_kpt in zip(labels, target_keypoints, src_keypoints):
                 coco_category_id = mscoco_label2category[label.item()]
                 layout = category_keypoint_layouts.get(coco_category_id, {"num_keypoints": 0})
@@ -173,14 +166,12 @@ class DFINECriterion(nn.Module):
                     num_valid_keypoints += n_kpt
 
         if num_valid_keypoints == 0:
-            # No valid keypoints, return zero loss
             return {"loss_keypoints": src_keypoints.sum() * 0}
 
         src_kpts_tensor = torch.cat(selected_src_keypoints, dim=0)
         tgt_kpts_tensor = torch.cat(selected_tgt_keypoints, dim=0)
 
         loss = F.l1_loss(src_kpts_tensor, tgt_kpts_tensor, reduction="sum")
-        # Normalize by total number of keypoint coordinates (x and y)
         loss = loss / (num_valid_keypoints * 2)
 
         return {"loss_keypoints": loss}
@@ -379,8 +370,8 @@ class DFINECriterion(nn.Module):
         # Compute all the requested losses
         losses = {}
         for loss in self.losses:
-            indices_in = indices_go if loss in ["boxes", "local"] else indices
-            num_boxes_in = num_boxes_go if loss in ["boxes", "local"] else num_boxes
+            indices_in = indices_go if loss in ["boxes", "local", "keypoints"] else indices
+            num_boxes_in = num_boxes_go if loss in ["boxes", "local", "keypoints"] else num_boxes
             meta = self.get_loss_meta_info(loss, outputs, targets, indices_in)
             l_dict = self.get_loss(loss, outputs, targets, indices_in, num_boxes_in, **meta)
             l_dict = {k: l_dict[k] * self.weight_dict[k] for k in l_dict if k in self.weight_dict}
@@ -391,8 +382,8 @@ class DFINECriterion(nn.Module):
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
                 aux_outputs["up"], aux_outputs["reg_scale"] = outputs["up"], outputs["reg_scale"]
                 for loss in self.losses:
-                    indices_in = indices_go if loss in ["boxes", "local"] else cached_indices[i]
-                    num_boxes_in = num_boxes_go if loss in ["boxes", "local"] else num_boxes
+                    indices_in = indices_go if loss in ["boxes", "local", "keypoints"] else cached_indices[i]
+                    num_boxes_in = num_boxes_go if loss in ["boxes", "local", "keypoints"] else num_boxes
                     meta = self.get_loss_meta_info(loss, aux_outputs, targets, indices_in)
                     l_dict = self.get_loss(
                         loss, aux_outputs, targets, indices_in, num_boxes_in, **meta
@@ -408,8 +399,8 @@ class DFINECriterion(nn.Module):
         if "pre_outputs" in outputs:
             aux_outputs = outputs["pre_outputs"]
             for loss in self.losses:
-                indices_in = indices_go if loss in ["boxes", "local"] else cached_indices[-1]
-                num_boxes_in = num_boxes_go if loss in ["boxes", "local"] else num_boxes
+                indices_in = indices_go if loss in ["boxes", "local", "keypoints"] else cached_indices[-1]
+                num_boxes_in = num_boxes_go if loss in ["boxes", "local", "keypoints"] else num_boxes
                 meta = self.get_loss_meta_info(loss, aux_outputs, targets, indices_in)
                 l_dict = self.get_loss(loss, aux_outputs, targets, indices_in, num_boxes_in, **meta)
 
@@ -434,6 +425,8 @@ class DFINECriterion(nn.Module):
 
             for i, aux_outputs in enumerate(outputs["enc_aux_outputs"]):
                 for loss in self.losses:
+                    if loss == "keypoints":
+                        continue  # Skip keypoints loss for encoder aux outputs
                     indices_in = indices_go if loss == "boxes" else cached_indices_enc[i]
                     num_boxes_in = num_boxes_go if loss == "boxes" else num_boxes
                     meta = self.get_loss_meta_info(loss, aux_outputs, enc_targets, indices_in)

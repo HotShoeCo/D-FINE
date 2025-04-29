@@ -8,7 +8,6 @@ import torchvision
 
 from packaging import version
 from torch import Tensor
-from .coco_keypoints import CocoKeyPoints
 
 tv_version = importlib.metadata.version("torchvision")
 has_keypoints = False
@@ -61,10 +60,9 @@ def convert_to_tv_tensor(tensor: Tensor, key: str, box_format="xyxy", spatial_si
 
     if key == "keypoints":
         if has_keypoints:
-            return CocoKeyPoints(tensor, canvas_size=spatial_size)
+            return KeyPoints(tensor, canvas_size=spatial_size)
         
-        # Pass through
-        return tensor
+        raise ValueError("KeyPoint TV Tensor types are not supported in this build.")
     
     if key == "masks":
         return Mask(tensor)

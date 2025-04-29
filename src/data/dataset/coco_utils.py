@@ -56,24 +56,21 @@ class ConvertCocoPolysToMask:
         if anno and "keypoints" in anno[0]:
             keypoints = [obj["keypoints"] for obj in anno]
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
-            num_keypoints = keypoints.shape[0]
-            if num_keypoints:
-                keypoints = keypoints.view(num_keypoints, -1, 3)
+            if keypoints is not None and keypoints.numel() > 0:
+                # COCO data is (x, y, v).
+                keypoints = keypoints.view(keypoints.shape[0], -1, 3)
+                # Need to return just (x, y).
+                keypoints = keypoints[..., :2]
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
-        boxes = boxes[keep]
-        classes = classes[keep]
-        masks = masks[keep]
-        if keypoints is not None:
-            keypoints = keypoints[keep]
-
         target = {}
-        target["boxes"] = boxes
-        target["labels"] = classes
-        target["masks"] = masks
+        target["boxes"] = boxes[keep]
+        target["labels"] = classes[keep]
+        target["masks"] = masks[keep]
         target["image_id"] = image_id
+
         if keypoints is not None:
-            target["keypoints"] = keypoints
+            target["keypoints"] = keypoints[keep]
 
         # for conversion to coco api
         area = torch.tensor([obj["area"] for obj in anno])

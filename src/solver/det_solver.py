@@ -145,6 +145,15 @@ class DetSolver(BaseSolver):
                         dist_utils.save_on_master(self.state_dict(), self.output_dir / "best_stg2.pth")
                     else:
                         dist_utils.save_on_master(self.state_dict(), self.output_dir / "best_stg1.pth")
+            else:
+                # Always print current vs best for all tracked keys
+                if dist_utils.is_main_process():
+                    best_epoch = best_stat['epoch']
+                    print(f"Current epoch {epoch} did not exceed best epoch {best_epoch}:")
+                    for k in test_stats:
+                        current_value = test_stats[k][0]
+                        best_value = best_stat.get(k, None)
+                        print(f"  {k}: current = {current_value:.4f}, best = {best_value if best_value is None else f'{best_value:.4f}'}")
 
             log_stats = {
                 **{f"train_{k}": v for k, v in train_stats.items()},

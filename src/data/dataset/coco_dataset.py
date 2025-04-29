@@ -45,7 +45,9 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         self.return_masks = return_masks
         self.remap_mscoco_category = remap_mscoco_category
 
+        print(f"Loading images from {img_folder}.")
         if self.iou_types:
+            print(f"Filtering images with invalid annotations for {self.iou_types}.")
             valid_ids = []
             for img_id in self.ids:
                 anns = self.coco.loadAnns(self.coco.getAnnIds(imgIds=img_id))
@@ -61,6 +63,7 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
                         valid = False
                 if valid:
                     valid_ids.append(img_id)
+            print(f"Loading {len(valid_ids)} of {len(self.ids)} dataset images.")
             self.ids = valid_ids
 
     def __getitem__(self, idx):
@@ -184,29 +187,25 @@ class ConvertCocoPolysToMask(object):
         if anno and "keypoints" in anno[0]:
             keypoints = [obj["keypoints"] for obj in anno]
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
-            num_keypoints = keypoints.shape[0]
-            if num_keypoints:
-                 keypoints = keypoints.view(num_keypoints, -1, 3)
+            if keypoints is not None:
+                # COCO data is (x, y, v).
+                keypoints = keypoints.view(keypoints.shape[0], -1, 3)
+                # Need to return just (x, y).
+                keypoints = keypoints[..., :2]
+
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
-        boxes = boxes[keep]
-        labels = labels[keep]
-        if self.return_masks:
-            masks = masks[keep]
-
-        if keypoints is not None:
-            keypoints = keypoints[keep]
-
         target = {}
-        target["boxes"] = boxes
-        target["labels"] = labels
-        if self.return_masks:
-            target["masks"] = masks
+        target["boxes"] = boxes[keep]
+        target["labels"] = labels[keep]
         target["image_id"] = image_id
         target["image_path"] = image_path
 
+        if self.return_masks:
+            target["masks"] = masks[keep]
+
         if keypoints is not None:
-            target["keypoints"] = keypoints
+            target["keypoints"] = keypoints[keep]
 
         # for conversion to coco api
         area = torch.tensor([obj["area"] for obj in anno])

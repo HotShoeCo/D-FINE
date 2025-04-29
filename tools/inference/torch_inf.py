@@ -23,7 +23,7 @@ def draw_keypoints_on_image(image_tensor, keypoints_tensor, threshold=0.5):
     """
     Draw keypoints using torchvision's draw_keypoints correctly.
     image_tensor: Tensor (3, H, W)
-    keypoints_tensor: (N, num_keypoints, 3)
+    keypoints_tensor: (N, num_keypoints, 2)
     """
     xy = keypoints_tensor[..., :2]  # (N, K, 2)
     conf = keypoints_tensor[..., 2]  # (N, K)

@@ -38,6 +38,8 @@ class Validator:
             metrics.pop("extended_metrics", None)
         return metrics
 
+    # _compute_keypoint_metrics method removed; keypoint metrics are now integrated into the main metrics computation.
+
     def _compute_main_metrics(self, preds):
         (
             self.metrics_per_class,
@@ -46,12 +48,18 @@ class Validator:
         ) = self._compute_metrics_and_confusion_matrix(preds)
         tps, fps, fns = 0, 0, 0
         ious = []
+        total_keypoint_tps, total_keypoint_fps, total_keypoint_fns = 0, 0, 0
         extended_metrics = {}
         for key, value in self.metrics_per_class.items():
             tps += value["TPs"]
             fps += value["FPs"]
             fns += value["FNs"]
             ious.extend(value["IoUs"])
+
+            # Keypoint metrics
+            total_keypoint_tps += value.get("keypoint_TPs", 0)
+            total_keypoint_fps += value.get("keypoint_FPs", 0)
+            total_keypoint_fns += value.get("keypoint_FNs", 0)
 
             extended_metrics[f"precision_{key}"] = (
                 value["TPs"] / (value["TPs"] + value["FPs"])
@@ -70,6 +78,23 @@ class Validator:
         recall = tps / (tps + fns) if (tps + fns) > 0 else 0
         f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
         iou = np.mean(ious).item() if ious else 0
+
+        # Keypoint metrics
+        keypoint_precision = (
+            total_keypoint_tps / (total_keypoint_tps + total_keypoint_fps)
+            if (total_keypoint_tps + total_keypoint_fps) > 0
+            else 0
+        )
+        keypoint_recall = (
+            total_keypoint_tps / (total_keypoint_tps + total_keypoint_fns)
+            if (total_keypoint_tps + total_keypoint_fns) > 0
+            else 0
+        )
+        keypoint_f1 = (
+            2 * (keypoint_precision * keypoint_recall) / (keypoint_precision + keypoint_recall)
+            if (keypoint_precision + keypoint_recall) > 0
+            else 0
+        )
         return {
             "f1": f1,
             "precision": precision,
@@ -78,77 +103,23 @@ class Validator:
             "TPs": tps,
             "FPs": fps,
             "FNs": fns,
+            "keypoint_f1": keypoint_f1,
+            "keypoint_precision": keypoint_precision,
+            "keypoint_recall": keypoint_recall,
+            "keypoint_TPs": total_keypoint_tps,
+            "keypoint_FPs": total_keypoint_fps,
+            "keypoint_FNs": total_keypoint_fns,
             "extended_metrics": extended_metrics,
         }
 
-    def _compute_matrix_multi_class(self, preds):
-        metrics_per_class = defaultdict(lambda: {"TPs": 0, "FPs": 0, "FNs": 0, "IoUs": []})
-        for pred, gt in zip(preds, self.gt):
-            pred_boxes = pred["boxes"]
-            pred_labels = pred["labels"]
-            gt_boxes = gt["boxes"]
-            gt_labels = gt["labels"]
-
-            # isolate each class
-            labels = torch.unique(torch.cat([pred_labels, gt_labels]))
-            for label in labels:
-                pred_cl_boxes = pred_boxes[pred_labels == label]  # filter by bool mask
-                gt_cl_boxes = gt_boxes[gt_labels == label]
-
-                n_preds = len(pred_cl_boxes)
-                n_gts = len(gt_cl_boxes)
-                if not (n_preds or n_gts):
-                    continue
-                if not n_preds:
-                    metrics_per_class[label.item()]["FNs"] += n_gts
-                    metrics_per_class[label.item()]["IoUs"].extend([0] * n_gts)
-                    continue
-                if not n_gts:
-                    metrics_per_class[label.item()]["FPs"] += n_preds
-                    metrics_per_class[label.item()]["IoUs"].extend([0] * n_preds)
-                    continue
-
-                ious = box_iou(pred_cl_boxes, gt_cl_boxes)  # matrix of all IoUs
-                ious_mask = ious >= self.iou_thresh
-
-                # indeces of boxes that have IoU >= threshold
-                pred_indices, gt_indices = torch.nonzero(ious_mask, as_tuple=True)
-
-                if not pred_indices.numel():  # no predicts matched gts
-                    metrics_per_class[label.item()]["FNs"] += n_gts
-                    metrics_per_class[label.item()]["IoUs"].extend([0] * n_gts)
-                    metrics_per_class[label.item()]["FPs"] += n_preds
-                    metrics_per_class[label.item()]["IoUs"].extend([0] * n_preds)
-                    continue
-
-                iou_values = ious[pred_indices, gt_indices]
-
-                # sorting by IoU to match hgihest scores first
-                sorted_indices = torch.argsort(-iou_values)
-                pred_indices = pred_indices[sorted_indices]
-                gt_indices = gt_indices[sorted_indices]
-                iou_values = iou_values[sorted_indices]
-
-                matched_preds = set()
-                matched_gts = set()
-                for pred_idx, gt_idx, iou in zip(pred_indices, gt_indices, iou_values):
-                    if gt_idx.item() not in matched_gts and pred_idx.item() not in matched_preds:
-                        matched_preds.add(pred_idx.item())
-                        matched_gts.add(gt_idx.item())
-                        metrics_per_class[label.item()]["TPs"] += 1
-                        metrics_per_class[label.item()]["IoUs"].append(iou.item())
-
-                unmatched_preds = set(range(n_preds)) - matched_preds
-                unmatched_gts = set(range(n_gts)) - matched_gts
-                metrics_per_class[label.item()]["FPs"] += len(unmatched_preds)
-                metrics_per_class[label.item()]["IoUs"].extend([0] * len(unmatched_preds))
-                metrics_per_class[label.item()]["FNs"] += len(unmatched_gts)
-                metrics_per_class[label.item()]["IoUs"].extend([0] * len(unmatched_gts))
-        return metrics_per_class
-
     def _compute_metrics_and_confusion_matrix(self, preds):
         # Initialize per-class metrics
-        metrics_per_class = defaultdict(lambda: {"TPs": 0, "FPs": 0, "FNs": 0, "IoUs": []})
+        metrics_per_class = defaultdict(
+            lambda: {
+                "TPs": 0, "FPs": 0, "FNs": 0, "IoUs": [],
+                "keypoint_TPs": 0, "keypoint_FPs": 0, "keypoint_FNs": 0
+            }
+        )
 
         # Collect all class IDs
         all_classes = set()
@@ -212,6 +183,21 @@ class Validator:
                     if pred_label == gt_label:
                         metrics_per_class[gt_label]["TPs"] += 1
                         metrics_per_class[gt_label]["IoUs"].append(iou.item())
+
+                        # Keypoint evaluation for matched pair
+                        if "keypoints" in pred and "keypoints" in gt:
+                            pred_kps = pred["keypoints"][pred_idx]
+                            gt_kps = gt["keypoints"][gt_idx]
+                            n_keypoints = gt_kps.shape[0]
+                            distance_thresh_sq = 10.0 ** 2  # pixels
+                            for kp_idx in range(n_keypoints):
+                                gt_x, gt_y = gt_kps[kp_idx, :2]
+                                pred_x, pred_y = pred_kps[kp_idx, :2]
+                                dist_sq = (gt_x - pred_x) ** 2 + (gt_y - pred_y) ** 2
+                                if dist_sq <= distance_thresh_sq:
+                                    metrics_per_class[gt_label]["keypoint_TPs"] += 1
+                                else:
+                                    metrics_per_class[gt_label]["keypoint_FNs"] += 1
                     else:
                         # Misclassification
                         metrics_per_class[gt_label]["FNs"] += 1
@@ -229,6 +215,11 @@ class Validator:
                 # Update per-class metrics
                 metrics_per_class[pred_label]["FPs"] += 1
                 metrics_per_class[pred_label]["IoUs"].append(0)
+                # Keypoint FP for unmatched predictions
+                if "keypoints" in pred:
+                    pred_kps = pred["keypoints"][pred_idx]
+                    n_keypoints = pred_kps.shape[0] if pred_kps.ndim > 1 else 1
+                    metrics_per_class[pred_label]["keypoint_FPs"] += n_keypoints
 
             # Unmatched ground truths (False Negatives)
             unmatched_gt_indices = set(range(n_gts)) - matched_gt_indices
@@ -240,6 +231,11 @@ class Validator:
                 # Update per-class metrics
                 metrics_per_class[gt_label]["FNs"] += 1
                 metrics_per_class[gt_label]["IoUs"].append(0)
+                # Keypoint FN for unmatched ground truths
+                if "keypoints" in gt:
+                    gt_kps = gt["keypoints"][gt_idx]
+                    n_keypoints = gt_kps.shape[0] if gt_kps.ndim > 1 else 1
+                    metrics_per_class[gt_label]["keypoint_FNs"] += n_keypoints
 
         return metrics_per_class, conf_matrix, class_to_idx
 
@@ -329,6 +325,10 @@ def filter_preds(preds, conf_thresh):
         pred["scores"] = pred["scores"][keep_idxs]
         pred["boxes"] = pred["boxes"][keep_idxs]
         pred["labels"] = pred["labels"][keep_idxs]
+        
+        if "keypoints" in pred:
+            pred["keypoints"] = pred["keypoints"][keep_idxs]
+    
     return preds
 
 
