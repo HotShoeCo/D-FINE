@@ -189,7 +189,7 @@ class ConvertCocoPolysToMask(object):
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
             if keypoints is not None:
                 # COCO data is (x, y, v).
-                keypoints = keypoints.view(keypoints.shape[0], -1, 3)
+                keypoints = keypoints.view(keypoints.shape[0], 17, 3)
                 # Need to return just (x, y).
                 keypoints = keypoints[..., :2]
 

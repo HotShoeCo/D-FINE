@@ -107,22 +107,27 @@ class CocoEvaluator(object):
             if len(prediction) == 0:
                 continue
 
+            # Filter out predictions for classes not annotated in this image.
+            # This is necessary as keypoint annotations may only be for people, but the model can predict bboxes for all categories.
+            gt_anns = self.coco_gt.imgToAnns.get(original_id, [])
+            image_gt_label_set = {ann["category_id"] for ann in gt_anns}
+
             boxes = prediction["boxes"]
             boxes = convert_to_xywh(boxes).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
 
-            coco_results.extend(
-                [
-                    {
-                        "image_id": original_id,
-                        "category_id": labels[k],
-                        "bbox": box,
-                        "score": scores[k],
-                    }
-                    for k, box in enumerate(boxes)
-                ]
-            )
+            for k, box in enumerate(boxes):
+                label_k = labels[k]
+                # only score classes present in GT for this image
+                if label_k not in image_gt_label_set:
+                    continue
+                coco_results.append({
+                    "image_id": original_id,
+                    "category_id": label_k,
+                    "bbox": box,
+                    "score": scores[k],
+                })
         return coco_results
 
     def prepare_for_coco_segmentation(self, predictions):

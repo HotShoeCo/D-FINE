@@ -239,7 +239,7 @@ def evaluate(
             preds.append(pred_item)
 
     # Conf matrix, F1, Precision, Recall, box IoU
-    metrics = Validator(gt, preds).compute_metrics()
+    metrics = Validator(gt, preds).compute_metrics(extended=True)
     print("Metrics:", metrics)
     if use_wandb:
         metrics = {f"metrics/{k}": v for k, v in metrics.items()}

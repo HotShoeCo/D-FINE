@@ -71,7 +71,7 @@ class Compose(T.Compose):
         cur_epoch = dataset.epoch
         policy_ops = self.policy["ops"]
         policy_epoch = self.policy["epoch"]
-
+        
         for transform in self.transforms:
             if type(transform).__name__ in policy_ops and cur_epoch >= policy_epoch:
                 pass

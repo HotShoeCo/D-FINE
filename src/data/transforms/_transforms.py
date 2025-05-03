@@ -13,7 +13,7 @@ import torchvision
 import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
-from ...core import register
+from ...core import register, create
 from .._misc import (
     BoundingBoxes,
     Image,
@@ -29,16 +29,17 @@ from torchvision.tv_tensors import wrap
 torchvision.disable_beta_transforms_warning()
 
 
+ColorJitter = register()(T.ColorJitter)
+GaussianBlur = register()(T.GaussianBlur)
+Normalize = register()(T.Normalize)
+RandomAffine = register()(T.RandomAffine)
+RandomCrop = register()(T.RandomCrop)
+RandomErasing = register()(T.RandomErasing)
+RandomHorizontalFlip = register()(T.RandomHorizontalFlip)
+RandomIoUCrop = register()(T.RandomIoUCrop)
 RandomPhotometricDistort = register()(T.RandomPhotometricDistort)
 RandomZoomOut = register()(T.RandomZoomOut)
-RandomHorizontalFlip = register()(T.RandomHorizontalFlip)
 Resize = register()(T.Resize)
-# ToImageTensor = register()(T.ToImageTensor)
-# ConvertDtype = register()(T.ConvertDtype)
-# PILToTensor = register()(T.PILToTensor)
-# SanitizeBoundingBoxes = register(name="SanitizeBoundingBoxes")(SanitizeBoundingBoxes)
-RandomCrop = register()(T.RandomCrop)
-Normalize = register()(T.Normalize)
 
 
 @register()
@@ -52,9 +53,11 @@ class EmptyTransform(T.Transform):
         inputs = inputs if len(inputs) > 1 else inputs[0]
         return inputs
 
-
 @register()
-class PadToSize(T.Pad):
+class Letterboxed(T.Transform):
+    """
+    Guarantees an image fits into the desired size even if the aspect ratio isn't right.
+    """
     _transformed_types = (
         PIL.Image.Image,
         Image,
@@ -64,54 +67,31 @@ class PadToSize(T.Pad):
         KeyPoints,
     )
 
-    def _get_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
-        sp = F.get_spatial_size(flat_inputs[0])
-        h, w = self.size[1] - sp[0], self.size[0] - sp[1]
-        self.padding = [0, 0, w, h]
-        return dict(padding=self.padding)
-
-    def __init__(self, size, fill=0, padding_mode="constant") -> None:
+    def __init__(self, size, fill=0, padding_mode="constant"):
+        super().__init__()
         if isinstance(size, int):
             size = (size, size)
-        self.size = size
-        super().__init__(0, fill, padding_mode)
+        self.size = (int(size[0]), int(size[1]))
+        self.fill = fill
+        self.padding_mode = padding_mode
 
-    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        fill = self._fill[type(inpt)]
-        padding = params["padding"]
-        return F.pad(inpt, padding=padding, fill=fill, padding_mode=self.padding_mode)  # type: ignore[arg-type]
+    def make_params(self, inpt: Any) -> Dict[str, Any]:
+        inpt = inpt if len(inpt) > 1 else inpt[0]
+        w, h = F.get_image_size(inpt[0])
+        target_h, target_w = self.size
+        scale = min(target_h / h, target_w / w)
+        new_h, new_w = int(h * scale), int(w * scale)
+        pad_h, pad_w = target_h - new_h, target_w - new_w
+        pad_top, pad_bottom = pad_h // 2, pad_h - pad_h // 2
+        pad_left, pad_right = pad_w // 2, pad_w - pad_w // 2
+        return {
+            "new_size": (new_h, new_w),
+            "padding": (pad_left, pad_top, pad_right, pad_bottom),
+        }
 
-    def __call__(self, *inputs: Any) -> Any:
-        outputs = super().forward(*inputs)
-        if len(outputs) > 1 and isinstance(outputs[1], dict):
-            outputs[1]["padding"] = torch.tensor(self.padding)
-        return outputs
-
-
-@register()
-class RandomIoUCrop(T.RandomIoUCrop):
-    _transformed_types = (PIL.Image.Image, Image, Video, Mask, BoundingBoxes, KeyPoints)
-
-    def __init__(
-        self,
-        min_scale: float = 0.3,
-        max_scale: float = 1,
-        min_aspect_ratio: float = 0.5,
-        max_aspect_ratio: float = 2,
-        sampler_options: Optional[List[float]] = None,
-        trials: int = 40,
-        p: float = 1.0,
-    ):
-        super().__init__(
-            min_scale, max_scale, min_aspect_ratio, max_aspect_ratio, sampler_options, trials
-        )
-        self.p = p
-
-    def __call__(self, *inputs: Any) -> Any:
-        if torch.rand(1) >= self.p:
-            return inputs if len(inputs) > 1 else inputs[0]
-
-        return super().forward(*inputs)
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:             
+        resized = F.resize(inpt, params["new_size"])
+        return F.pad(resized, padding=params["padding"], fill=self.fill, padding_mode=self.padding_mode)
 
 
 @register()
@@ -171,8 +151,9 @@ class NormalizeKeyPoints(T.Transform):
         scale = torch.tensor([width, height], device=inpt.device)
         return KeyPoints(inpt / scale, canvas_size=inpt.canvas_size)
 
-@register(name="SanitizeBoundingBoxesWithKeyPoints")
+@register()
 class SanitizeBoundingBoxesWithKeyPoints(T.SanitizeBoundingBoxes):
+
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         is_label = params["labels"] is not None and any(inpt is label for label in params["labels"])
         is_bounding_boxes_or_mask_or_keypoints = isinstance(
@@ -188,3 +169,16 @@ class SanitizeBoundingBoxesWithKeyPoints(T.SanitizeBoundingBoxes):
         else:
             wrapped = wrap(output, like=inpt)
             return wrapped
+        
+
+@register()
+class RandomApply:
+
+    def __new__(cls, transform: dict, p: float = 1.0):
+        # Extract and build the inner transform
+        kwargs = transform.copy()
+        t_type = kwargs.pop("type")
+        inner_transform = create(t_type, **kwargs)
+
+        # Wrap it using torchvision's built-in RandomApply
+        return T.RandomApply(torch.nn.ModuleList([inner_transform]), p=p)
