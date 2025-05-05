@@ -265,6 +265,6 @@ def evaluate(
         if "segm" in iou_types:
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
         if "keypoints" in iou_types:
-            stats["keypoints"] = coco_evaluator.coco_eval["keypoints"].stats.tolist()
+            stats["coco_eval_keypoints"] = coco_evaluator.coco_eval["keypoints"].stats.tolist()
 
     return stats, coco_evaluator

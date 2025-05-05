@@ -159,36 +159,42 @@ class Validator:
                     if pred_label == gt_label:
                         metrics_per_class[gt_label]["TPs"] += 1
                         metrics_per_class[gt_label]["IoUs"].append(iou.item())
-                        
+
                         # Keypoint-level metrics
-                        pred_kpts = pred["keypoints"][pred_idx]
-                        gt_kpts   = gt["keypoints"][gt_idx]
-                        
-                        # Support various category keypoints (person, golf club, etc). Align number of keypoints to ground truth count.
-                        K = gt_kpts.shape[0]
-                        pred_kpts = pred_kpts[:K]
-                        
-                        # Determine presence: non-zero keypoints
-                        gt_present   = (gt_kpts.abs().sum(dim=1) > 0)
-                        pred_present = (pred_kpts.abs().sum(dim=1) > 0)
-                        
-                        # False negatives (missed keypoints) and false positives (extra keypoints)
-                        fn_missing = int((gt_present & ~pred_present).sum().item())
-                        fp_extra   = int((pred_present & ~gt_present).sum().item())
-                        
-                        # True positives and localization errors
-                        common_mask = gt_present & pred_present
-                        tp_local   = 0
-                        fn_bad_loc = 0
-                        if common_mask.any():
-                            diffs   = pred_kpts[common_mask, :2] - gt_kpts[common_mask, :2]
-                            dist_sq = (diffs ** 2).sum(dim=1)
-                            tp_local   = int((dist_sq <= self.kpt_threshold_sq).sum().item())
-                            fn_bad_loc = int((dist_sq >  self.kpt_threshold_sq).sum().item())
-                        # Update per-class keypoint counts
-                        metrics_per_class[gt_label]["KPT_TP"] += tp_local
-                        metrics_per_class[gt_label]["KPT_FN"] += fn_missing + fn_bad_loc
-                        metrics_per_class[gt_label]["KPT_FP"] += fp_extra + fn_bad_loc
+                        if (
+                            "keypoints" in pred
+                            and "keypoints" in gt
+                            and (gt["keypoints"][gt_idx].abs().sum(dim=1) > 0).any()
+                        ):
+                            pred_kpts = pred["keypoints"][pred_idx]
+                            gt_kpts   = gt["keypoints"][gt_idx]
+
+                            # Support various category keypoints (person, golf club, etc). Align number of keypoints to ground truth count.
+                            K = gt_kpts.shape[0]
+                            pred_kpts = pred_kpts[:K]
+
+                            # Determine presence: non-zero keypoints
+                            gt_present   = (gt_kpts.abs().sum(dim=1) > 0)
+                            pred_present = (pred_kpts.abs().sum(dim=1) > 0)
+
+                            # False negatives (missed keypoints) and false positives (extra keypoints)
+                            fn_missing = int((gt_present & ~pred_present).sum().item())
+                            fp_extra   = int((pred_present & ~gt_present).sum().item())
+
+                            # True positives and localization errors
+                            common_mask = gt_present & pred_present
+                            tp_local   = 0
+                            fn_bad_loc = 0
+                            if common_mask.any():
+                                diffs   = pred_kpts[common_mask, :2] - gt_kpts[common_mask, :2]
+                                dist_sq = (diffs ** 2).sum(dim=1)
+                                tp_local   = int((dist_sq <= self.kpt_threshold_sq).sum().item())
+                                fn_bad_loc = int((dist_sq >  self.kpt_threshold_sq).sum().item())
+
+                            # Update per-class keypoint counts
+                            metrics_per_class[gt_label]["KPT_TP"] += tp_local
+                            metrics_per_class[gt_label]["KPT_FN"] += fn_missing + fn_bad_loc
+                            metrics_per_class[gt_label]["KPT_FP"] += fp_extra + fn_bad_loc
                     else:
                         # Misclassification
                         metrics_per_class[gt_label]["FNs"] += 1

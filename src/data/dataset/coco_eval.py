@@ -171,30 +171,44 @@ class CocoEvaluator(object):
             if len(prediction) == 0:
                 continue
 
+            # Only evaluate classes present in GT with non-empty keypoints.
+            gt_anns = self.coco_gt.imgToAnns.get(original_id, [])
+            image_gt_label_set = {
+                ann["category_id"]
+                for ann in gt_anns
+                if "keypoints" in ann and any(ann["keypoints"])
+            }
+
+            boxes = prediction["boxes"]
+            boxes = convert_to_xywh(boxes).tolist()
             keypoints = prediction["keypoints"]
 
-            # COCO Keypoints have values (x, y, v) and the model is just (x, y). Pad results so the evaluator has matching dimensions.
             if keypoints.shape[-1] == 2:
-                B, N, _ = keypoints.shape  # batch size, num keypoints, 2
+                # KeyPoints TV types are dim 2; coco is dim 3. 
+                # Add the third column and set to 2 (visible).
+                B, N, _ = keypoints.shape
                 v = torch.full((B, N, 1), 2.0, device=keypoints.device, dtype=keypoints.dtype)
-                keypoints = torch.cat([keypoints, v], dim=-1)  # (B, N, 3)
+                keypoints = torch.cat([keypoints, v], dim=-1)
 
             keypoints = keypoints.flatten(start_dim=1).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
 
-            coco_results.extend(
-                [
-                    {
-                        "image_id": original_id,
-                        "category_id": labels[k],
-                        "keypoints": keypoint,
-                        "num_keypoints": len(keypoint) // 3,
-                        "score": scores[k],
-                    }
-                    for k, keypoint in enumerate(keypoints)
-                ]
-            )
+            for k, keypoint in enumerate(keypoints):
+                label_k = labels[k]
+                if label_k not in image_gt_label_set:
+                    # Skip if this category isn't in GT (e.g., not 'person').
+                    continue
+
+                coco_results.append({
+                    "bbox": boxes[k],
+                    "image_id": original_id,
+                    "category_id": label_k,
+                    "keypoints": keypoint,
+                    "num_keypoints": len(keypoint) // 3,
+                    "score": scores[k],
+                })
+
         return coco_results
 
 
