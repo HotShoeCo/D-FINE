@@ -188,11 +188,7 @@ class ConvertCocoPolysToMask(object):
             keypoints = [obj["keypoints"] for obj in anno]
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
             if keypoints is not None:
-                # COCO data is (x, y, v).
-                keypoints = keypoints.view(keypoints.shape[0], 17, 3)
-                # Need to return just (x, y).
-                keypoints = keypoints[..., :2]
-
+                keypoints = _reshape_keypoints(keypoints)
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         target = {}
@@ -212,11 +208,30 @@ class ConvertCocoPolysToMask(object):
         iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
-
         target["orig_size"] = torch.as_tensor([int(w), int(h)])
-        # target["size"] = torch.as_tensor([int(w), int(h)])
-
+        
         return image, target
+
+def _reshape_keypoints(tensor):
+    """
+    Reshapes a PyTorch tensor of shape [N, K*3] into [N, K, 2], setting
+    (x, y) to (0, 0) if v is 0 or if both x and y are 0.
+
+    Args:
+        tensor (torch.Tensor): A tensor of shape [N, K*3], where the last
+            dimension represents (x, y, v) for each keypoint.
+
+    Returns:
+        torch.Tensor: A tensor of shape [N, K, 2], containing (x, y)
+            coordinates, with invalid keypoints set to (0, 0).
+    """
+    N = tensor.shape[0]
+    K = tensor.shape[1] // 3
+    reshaped_tensor = tensor.reshape(N, K, 3)
+
+    # Zero out keypoints where v == 0
+    reshaped_tensor[reshaped_tensor[:, :, 2] == 0] = 0
+    return reshaped_tensor[..., :2]
 
 
 mscoco_category2name = {

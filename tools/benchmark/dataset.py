@@ -40,7 +40,7 @@ class PadToSize(T.Pad):
         Returns:
             PIL Image or Tensor: Padded image.
         """
-        w, h = F.get_image_size(img)
+        h, w = F.get_size(img)
         padding = (0, 0, self.size[0] - w, self.size[1] - h)
         return F.pad(img, padding, self.fill, self.padding_mode)
 

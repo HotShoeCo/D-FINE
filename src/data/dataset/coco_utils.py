@@ -27,9 +27,6 @@ def convert_coco_poly_to_mask(segmentations, height, width):
     else:
         masks = torch.zeros((0, height, width), dtype=torch.uint8)
     return masks
-
-
-class ConvertCocoPolysToMask:
     def __call__(self, image, target):
         w, h = image.size
 
@@ -167,7 +164,8 @@ def convert_to_coco_api(ds):
                 ann["segmentation"] = coco_mask.encode(masks[i].numpy())
             if "keypoints" in targets:
                 ann["keypoints"] = keypoints[i]
-                ann["num_keypoints"] = sum(k != 0 for k in keypoints[i][2::3])
+                num_k = sum(k != 0 for k in keypoints[i][2::3])
+                ann["num_keypoints"] = num_k
             dataset["annotations"].append(ann)
             ann_id += 1
     dataset["categories"] = [{"id": i} for i in sorted(categories)]

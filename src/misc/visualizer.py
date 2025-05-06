@@ -50,8 +50,7 @@ def save_samples(samples: torch.Tensor, targets: List[Dict], output_dir: str, sp
             target_boxes,
             labels=[str(lbl.item()) for lbl in target_labels],
             colors="red",
-            width=3,
-            font_size=12
+            width=3
         )
 
         # Draw keypoints if present

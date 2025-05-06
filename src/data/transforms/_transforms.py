@@ -77,7 +77,7 @@ class Letterboxed(T.Transform):
 
     def make_params(self, inpt: Any) -> Dict[str, Any]:
         inpt = inpt if len(inpt) > 1 else inpt[0]
-        w, h = F.get_image_size(inpt[0])
+        h, w = F.get_size(inpt[0])
         target_h, target_w = self.size
         scale = min(target_h / h, target_w / w)
         new_h, new_w = int(h * scale), int(w * scale)

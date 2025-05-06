@@ -14,6 +14,8 @@ import faster_coco_eval.core.mask as mask_util
 import numpy as np
 import torch
 
+from .coco_dataset import category_keypoint_layouts
+
 from faster_coco_eval import COCO, COCOeval_faster
 from ...core import register
 from ...misc import dist_utils
@@ -181,31 +183,39 @@ class CocoEvaluator(object):
 
             boxes = prediction["boxes"]
             boxes = convert_to_xywh(boxes).tolist()
-            keypoints = prediction["keypoints"]
-
-            if keypoints.shape[-1] == 2:
-                # KeyPoints TV types are dim 2; coco is dim 3. 
-                # Add the third column and set to 2 (visible).
-                B, N, _ = keypoints.shape
-                v = torch.full((B, N, 1), 2.0, device=keypoints.device, dtype=keypoints.dtype)
-                keypoints = torch.cat([keypoints, v], dim=-1)
-
-            keypoints = keypoints.flatten(start_dim=1).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
 
-            for k, keypoint in enumerate(keypoints):
-                label_k = labels[k]
+            # KeyPoints TV types are dim 2; coco is dim 3. 
+            # Add the third column and set to 2 (visible).
+            keypoints = prediction["keypoints"]
+            x = keypoints[..., 0]
+            y = keypoints[..., 1]
+            visible = ((x != 0) & (y != 0)).float().unsqueeze(-1) * 2.0
+            keypoints = torch.cat([x.unsqueeze(-1), y.unsqueeze(-1), visible], dim=-1)
+
+            for k, label_k in enumerate(labels):
                 if label_k not in image_gt_label_set:
                     # Skip if this category isn't in GT (e.g., not 'person').
                     continue
+
+                layout = category_keypoint_layouts[label_k]
+                n_kpt = layout["num_keypoints"]
+                kpt = keypoints[k]
+
+                # Zero out everything after n_kpt
+                if n_kpt < kpt.shape[1]:
+                    kpt[:, n_kpt:] = 0
+
+                num_visible_kpts = int(((kpt[:n_kpt, 0] != 0) | (kpt[:n_kpt, 1] != 0)).sum().item())
+                kpt = kpt.reshape(1, -1).flatten().tolist()
 
                 coco_results.append({
                     "bbox": boxes[k],
                     "image_id": original_id,
                     "category_id": label_k,
-                    "keypoints": keypoint,
-                    "num_keypoints": len(keypoint) // 3,
+                    "keypoints": kpt,
+                    "num_keypoints": num_visible_kpts,
                     "score": scores[k],
                 })
 

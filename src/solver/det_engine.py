@@ -195,52 +195,84 @@ def evaluate(
         #     outputs = model(samples)
 
         # TODO (lyuwenyu), fix dataset converted using `convert_to_coco_api`?
-        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        # orig_target_sizes = torch.tensor([[samples.shape[-1], samples.shape[-2]]], device=samples.device)
-
-        results = postprocessor(outputs, orig_target_sizes)
+        results = postprocessor(outputs)
 
         # if 'segm' in postprocessor.keys():
         #     target_sizes = torch.stack([t["size"] for t in targets], dim=0)
         #     results = postprocessor['segm'](results, outputs, orig_target_sizes, target_sizes)
-
-        res = {target["image_id"].item(): output for target, output in zip(targets, results)}
-        if coco_evaluator is not None:
-            coco_evaluator.update(res)
-
-        # validator format for metrics
+        
         for idx, (target, result) in enumerate(zip(targets, results)):
-            gt_item = {
-                "boxes": scale_boxes(  # from model input size to original img size
-                    target["boxes"],
-                    (target["orig_size"][1], target["orig_size"][0]),
-                    (samples[idx].shape[-1], samples[idx].shape[-2]),
-                ),
-                "labels": target["labels"],
+            # Predictions
+            image_id = target["image_id"].item()
+            orig_w, orig_h = target["orig_size"]
+            input_h, input_w = samples[idx].shape[-2:]
+
+            # Denormalize predictions from [0,1] space relative to the model input dim.
+            result["boxes"][:, [0, 2]] *= input_w
+            result["boxes"][:, [1, 3]] *= input_h
+            
+            # Scale back to original image size. (e.g, model outputs in 640x640 but sample image is 640x480).
+            pred_boxes = scale_boxes(result["boxes"], orig_w, orig_h, input_w, input_h)
+            pred_item = {
+                "boxes": pred_boxes,
+                "labels": result["labels"],
+                "scores": result["scores"],
             }
             
+            if "keypoints" in result:
+                # Same denorm, scale stuff.
+                result["keypoints"][..., 0] *= input_w
+                result["keypoints"][..., 1] *= input_h
+                pred_kpts = scale_keypoints(result["keypoints"], orig_w, orig_h, input_w, input_h)
+                pred_item["keypoints"] = pred_kpts
+
+            # Validator GT (Targets)
+            gt_item = {
+                "boxes": scale_boxes(target["boxes"], orig_w, orig_h, input_w, input_h),
+                "labels": target["labels"],
+            }
             if "keypoints" in target:
-                gt_item["keypoints"] = scale_keypoints(
-                    target["keypoints"],
-                    (target["orig_size"][1], target["orig_size"][0]),
-                    (samples[idx].shape[-1], samples[idx].shape[-2]),
-                )
+                gt_item["keypoints"] = scale_keypoints(target["keypoints"], orig_w, orig_h, input_w, input_h)
 
             gt.append(gt_item)
-
-            labels = (
-                torch.tensor([mscoco_category2label[int(x.item())] for x in result["labels"].flatten()])
-                .to(result["labels"].device)
-                .reshape(result["labels"].shape)
-            ) if postprocessor.remap_mscoco_category else result["labels"]
-            pred_item = {"boxes": result["boxes"], "labels": labels, "scores": result["scores"]}
-            if "keypoints" in result:
-                pred_item["keypoints"] = result["keypoints"]
             preds.append(pred_item)
+
+            # # --- DEBUG VISUALIZATION ---
+            # from pathlib import Path
+            # from torchvision.utils import draw_keypoints, draw_bounding_boxes
+            # from torchvision.transforms.functional import to_pil_image, to_tensor
+            # from PIL import Image
+
+            # if dist_utils.is_main_process():
+            #     pred_dir = Path("/workspace/training/output/predictions")
+            #     pred_dir.mkdir(parents=True, exist_ok=True)
+
+            #     im_pil = Image.open(target["image_path"]).convert("RGB")
+            #     img = (to_tensor(im_pil) * 255).to(torch.uint8)
+
+
+            #     img_out = draw_bounding_boxes(img.clone(), gt_item["boxes"].cpu(), colors="green")
+            #     img_out = draw_bounding_boxes(img_out, pred_boxes.cpu(), colors="red")
+
+            #     if "keypoints" in gt_item:
+            #         img_out = draw_keypoints(img_out, gt_item["keypoints"].cpu(), colors="green", radius=5)
+            #     if "keypoints" in pred_item:
+            #         img_out = draw_keypoints(img_out, pred_kpts.cpu(), colors="red", radius=5)
+
+            #     out_path = pred_dir / f"{image_id}_eval.png"
+            #     to_pil_image(img_out).save(out_path)
+            # # --- END DEBUG VISUALIZATION ---
+
+        # After results are denormalized and all that, update coco results.
+        if coco_evaluator is not None:
+            res = {target["image_id"].item(): output for target, output in zip(targets, results)}
+            coco_evaluator.update(res)
 
     # Conf matrix, F1, Precision, Recall, box IoU
     metrics = Validator(gt, preds).compute_metrics(extended=True)
-    print("Metrics:", metrics)
+    print("Validation Metrics:")
+    for k, v in sorted(metrics.items()):
+        print(f"  {k:30}: {v:.4f}" if isinstance(v, float) else f"  {k:30}: {v}")
     if use_wandb:
         metrics = {f"metrics/{k}": v for k, v in metrics.items()}
         metrics["epoch"] = epoch

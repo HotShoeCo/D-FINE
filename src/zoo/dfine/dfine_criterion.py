@@ -137,7 +137,7 @@ class DFINECriterion(nn.Module):
 
         return losses
 
-    def loss_keypoints(self, outputs, targets, indices, num_boxes):
+    def loss_keypoints(self, outputs, targets, indices, boxes_weight):
         assert "pred_keypoints" in outputs, "Keypoint predictions not found in outputs"
         batch_idx, src_idx = self._get_src_permutation_idx(indices)
 
@@ -148,13 +148,12 @@ class DFINECriterion(nn.Module):
 
         for t, (_, matched_indices) in zip(targets, indices):
             if "keypoints" not in t:
-                continue 
+                continue
 
             labels = t["labels"][matched_indices]
             target_keypoints = t["keypoints"][matched_indices]
 
-            # KeyPoints need to be sliced down to the number of keypoints that matter per category.
-            # (e.g., Person has 17 keypoints, but an object like a golf club may have 5, so only 5 keypoints matter.)
+            # For each matched instance, include all keypoints up to n_kpt (category-defined).
             for label, tgt_kpt, pred_kpt in zip(labels, target_keypoints, src_keypoints):
                 coco_category_id = mscoco_label2category[label.item()]
                 layout = category_keypoint_layouts.get(coco_category_id, {"num_keypoints": 0})

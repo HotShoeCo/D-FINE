@@ -35,15 +35,11 @@ class DFINEPostProcessor(nn.Module):
     def extra_repr(self) -> str:
         return f"use_focal_loss={self.use_focal_loss}, num_classes={self.num_classes}, num_top_queries={self.num_top_queries}"
 
-    # def forward(self, outputs, orig_target_sizes):
-    def forward(self, outputs, orig_target_sizes: torch.Tensor):
+    def forward(self, outputs):
         boxes = outputs["pred_boxes"]
-        keypoints = outputs["pred_keypoints"]
-        logits = outputs["pred_logits"]
-        # orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-
         bbox_pred = torchvision.ops.box_convert(boxes, in_fmt="cxcywh", out_fmt="xyxy")
-        bbox_pred *= orig_target_sizes.repeat(1, 2).unsqueeze(1)
+        logits = outputs["pred_logits"]
+        keypoints = outputs["pred_keypoints"]
 
         if self.use_focal_loss:
             scores = F.sigmoid(logits)
@@ -73,10 +69,6 @@ class DFINEPostProcessor(nn.Module):
                 keypoints = torch.stack([
                     kpts[idx] for kpts, idx in zip(keypoints, index)
                 ])
-
-        # Convert normalized keypoints back to pixel coordinates
-        # Expand to [B, 1, 1, 2] so it broadcasts over [B, N, K, 2]
-        keypoints[..., :2] *= orig_target_sizes[:, None, None, :]
 
         # TODO for onnx export
         if self.deploy_mode:

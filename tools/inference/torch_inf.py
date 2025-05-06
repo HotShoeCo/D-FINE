@@ -77,8 +77,7 @@ def draw(images, labels, boxes, scores, keypoints=[], thrh=0.4, names_dict=None)
                 image_tensor,
                 box,
                 labels=labels_list,
-                width=2,
-                font_size=12,
+                width=2
             )
 
         if kpts is not None and len(kpts) > 0:

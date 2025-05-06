@@ -8,8 +8,8 @@ Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 
 import datetime
 import json
+import sys
 import time
-
 import torch
 
 from ..misc import dist_utils, stats
@@ -185,6 +185,7 @@ class DetSolver(BaseSolver):
                                 coco_eval.eval,
                                 self.output_dir / "eval" / f"{iou_type}_{name}",
                             )
+            sys.stdout.flush()
 
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))

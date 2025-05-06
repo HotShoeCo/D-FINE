@@ -10,12 +10,12 @@ from packaging import version
 from torch import Tensor
 
 tv_version = importlib.metadata.version("torchvision")
-has_keypoints = False
+has_tv_keypoints = False
 
 
 if tv_version >= "0.22":
     from torchvision.tv_tensors import KeyPoints
-    has_keypoints = True
+    has_tv_keypoints = True
 
 
 if tv_version >= "0.16":
@@ -59,10 +59,10 @@ def convert_to_tv_tensor(tensor: Tensor, key: str, box_format="xyxy", spatial_si
         return BoundingBoxes(tensor, **_kwargs)
 
     if key == "keypoints":
-        if has_keypoints:
-            return KeyPoints(tensor, canvas_size=spatial_size)
-        
-        raise ValueError("KeyPoint TV Tensor types are not supported in this build.")
+        if not has_tv_keypoints:
+            raise ValueError("KeyPoint TV Tensor types are not supported in this build.")
+
+        return KeyPoints(tensor, canvas_size=spatial_size)
     
     if key == "masks":
         return Mask(tensor)
