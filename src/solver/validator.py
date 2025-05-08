@@ -78,14 +78,27 @@ class Validator:
         recall = tps / (tps + fns) if (tps + fns) > 0 else 0
         f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
         iou = np.mean(ious).item() if ious else 0
+
+        tp_kpt_total = sum(v["KPT_TP"] for v in self.metrics_per_class.values())
+        fp_kpt_total = sum(v["KPT_FP"] for v in self.metrics_per_class.values())
+        fn_kpt_total = sum(v["KPT_FN"] for v in self.metrics_per_class.values())
+
+        overall_kpt_precision = tp_kpt_total / (tp_kpt_total + fp_kpt_total) if (tp_kpt_total + fp_kpt_total) > 0 else 0
+        overall_kpt_recall = tp_kpt_total / (tp_kpt_total + fn_kpt_total) if (tp_kpt_total + fn_kpt_total) > 0 else 0
+
         return {
             "f1": f1,
-            "precision": precision,
-            "recall": recall,
             "iou": iou,
             "TPs": tps,
             "FPs": fps,
             "FNs": fns,
+            "precision": precision,
+            "recall": recall,
+            "kpt_TPs": tp_kpt_total,
+            "kpt_FPs": fp_kpt_total,
+            "kpt_FNs": fn_kpt_total,
+            "kpt_precision": overall_kpt_precision,
+            "kpt_recall": overall_kpt_recall,
             "extended_metrics": extended_metrics,
         }
 
@@ -161,27 +174,15 @@ class Validator:
                         metrics_per_class[gt_label]["IoUs"].append(iou.item())
 
                         # Keypoint-level metrics
-                        if (
-                            "keypoints" in pred
-                            and "keypoints" in gt
-                            and (gt["keypoints"][gt_idx].abs().sum(dim=1) > 0).any()
-                        ):
+                        if "keypoints" in pred and "keypoints" in gt and (gt["keypoints"][gt_idx].abs().sum(dim=1) > 0).any():
                             pred_kpts = pred["keypoints"][pred_idx]
                             gt_kpts   = gt["keypoints"][gt_idx]
-
-                            # Support various category keypoints (person, golf club, etc). Align number of keypoints to ground truth count.
                             K = gt_kpts.shape[0]
                             pred_kpts = pred_kpts[:K]
-
-                            # Determine presence: non-zero keypoints
                             gt_present   = (gt_kpts.abs().sum(dim=1) > 0)
                             pred_present = (pred_kpts.abs().sum(dim=1) > 0)
-
-                            # False negatives (missed keypoints) and false positives (extra keypoints)
                             fn_missing = int((gt_present & ~pred_present).sum().item())
                             fp_extra   = int((pred_present & ~gt_present).sum().item())
-
-                            # True positives and localization errors
                             common_mask = gt_present & pred_present
                             tp_local   = 0
                             fn_bad_loc = 0
@@ -191,10 +192,13 @@ class Validator:
                                 tp_local   = int((dist_sq <= self.kpt_threshold_sq).sum().item())
                                 fn_bad_loc = int((dist_sq >  self.kpt_threshold_sq).sum().item())
 
-                            # Update per-class keypoint counts
                             metrics_per_class[gt_label]["KPT_TP"] += tp_local
                             metrics_per_class[gt_label]["KPT_FN"] += fn_missing + fn_bad_loc
-                            metrics_per_class[gt_label]["KPT_FP"] += fp_extra + fn_bad_loc
+                            metrics_per_class[gt_label]["KPT_FP"] += fp_extra
+
+                            # Now, account for predicted keypoints in matched objects that didn't match a GT keypoint
+                            unmatched_pred_kpts_in_match = int((pred_present & ~gt_present).sum().item())
+                            metrics_per_class[gt_label]["KPT_FP"] += unmatched_pred_kpts_in_match
                     else:
                         # Misclassification
                         metrics_per_class[gt_label]["FNs"] += 1

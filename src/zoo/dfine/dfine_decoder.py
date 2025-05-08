@@ -607,6 +607,7 @@ class DFINETransformer(nn.Module):
             self.enc_score_head = nn.Linear(hidden_dim, num_classes)
 
         self.enc_bbox_head = MLP(hidden_dim, hidden_dim, 4, 3)
+        self.enc_keypoint_head = MLP(hidden_dim, hidden_dim, self.num_keypoints * 2, 3)
 
         # decoder head
         self.eval_idx = eval_idx if eval_idx >= 0 else num_layers + eval_idx
@@ -626,7 +627,7 @@ class DFINETransformer(nn.Module):
             ]
         )
         self.pre_keypoint_head = MLP(hidden_dim, hidden_dim, self.num_keypoints * 2, 3)
-        self.dec_keypoints_head = nn.ModuleList(
+        self.dec_keypoint_head = nn.ModuleList(
             [
                 MLP(hidden_dim, hidden_dim, self.num_keypoints * 2, 3)
                 for _ in range(self.eval_idx + 1)
@@ -654,10 +655,18 @@ class DFINETransformer(nn.Module):
         self.dec_score_head = nn.ModuleList(
             [nn.Identity()] * (self.eval_idx) + [self.dec_score_head[self.eval_idx]]
         )
+        
         self.dec_bbox_head = nn.ModuleList(
             [
                 self.dec_bbox_head[i] if i <= self.eval_idx else nn.Identity()
                 for i in range(len(self.dec_bbox_head))
+            ]
+        )
+
+        self.dec_keypoint_head = nn.ModuleList(
+            [
+                self.dec_keypoint_head[i] if i <= self.eval_idx else nn.Identity()
+                for i in range(len(self.dec_keypoint_head))
             ]
         )
 
@@ -666,15 +675,32 @@ class DFINETransformer(nn.Module):
         init.constant_(self.enc_score_head.bias, bias)
         init.constant_(self.enc_bbox_head.layers[-1].weight, 0)
         init.constant_(self.enc_bbox_head.layers[-1].bias, 0)
+        init.constant_(self.enc_keypoint_head.layers[-1].weight, 0)
+        init.constant_(self.enc_keypoint_head.layers[-1].bias, 0)
 
         init.constant_(self.pre_bbox_head.layers[-1].weight, 0)
         init.constant_(self.pre_bbox_head.layers[-1].bias, 0)
+        init.constant_(self.pre_keypoint_head.layers[-1].weight, 0)
+        init.constant_(self.pre_keypoint_head.layers[-1].bias, 0)
 
+        # Initialize decoder score and bbox heads
         for cls_, reg_ in zip(self.dec_score_head, self.dec_bbox_head):
             init.constant_(cls_.bias, bias)
             if hasattr(reg_, "layers"):
                 init.constant_(reg_.layers[-1].weight, 0)
                 init.constant_(reg_.layers[-1].bias, 0)
+
+        # Initialize decoder keypoint heads
+        for kpt_head in self.dec_keypoint_head:
+            if hasattr(kpt_head, 'layers') and len(kpt_head.layers) > 0:
+                init.normal_(kpt_head.layers[-1].weight, mean=0.0, std=0.01) # Small random weights
+                init.constant_(kpt_head.layers[-1].bias, 0.0) # Initialize bias to zero
+
+        # Initialize pre_keypoint_head
+        if hasattr(self.pre_keypoint_head, 'layers') and len(self.pre_keypoint_head.layers) > 0:
+            init.normal_(self.pre_keypoint_head.layers[-1].weight, mean=0.0, std=0.01)
+            init.constant_(self.pre_keypoint_head.layers[-1].bias, 0.0)
+
 
         init.xavier_uniform_(self.enc_output[0].weight)
         if self.learn_query_content:
@@ -799,7 +825,7 @@ class DFINETransformer(nn.Module):
         output_memory: torch.Tensor = self.enc_output(memory)
         enc_outputs_logits: torch.Tensor = self.enc_score_head(output_memory)
 
-        enc_topk_bboxes_list, enc_topk_logits_list = [], []
+        enc_topk_bboxes_list, enc_topk_logits_list, enc_topk_keypoints_list = [], [], []
         enc_topk_memory, enc_topk_logits, enc_topk_anchors = self._select_topk(
             output_memory, enc_outputs_logits, anchors, self.num_queries
         )
@@ -809,7 +835,13 @@ class DFINETransformer(nn.Module):
         if self.training:
             enc_topk_bboxes = F.sigmoid(enc_topk_bbox_unact)
             enc_topk_bboxes_list.append(enc_topk_bboxes)
+            
             enc_topk_logits_list.append(enc_topk_logits)
+            
+            enc_topk_keypoints = self.enc_keypoint_head(enc_topk_memory)
+            enc_topk_keypoints = self._reshape_keypoints(enc_topk_keypoints)
+            enc_topk_keypoints = F.sigmoid(enc_topk_keypoints)
+            enc_topk_keypoints_list.append(enc_topk_keypoints)
 
         # if self.num_select_queries != self.num_queries:
         #     raise NotImplementedError('')
@@ -825,7 +857,7 @@ class DFINETransformer(nn.Module):
             enc_topk_bbox_unact = torch.concat([denoising_bbox_unact, enc_topk_bbox_unact], dim=1)
             content = torch.concat([denoising_logits, content], dim=1)
 
-        return content, enc_topk_bbox_unact, enc_topk_bboxes_list, enc_topk_logits_list
+        return content, enc_topk_bbox_unact, enc_topk_keypoints_list, enc_topk_bboxes_list, enc_topk_logits_list
 
     def _select_topk(
         self,
@@ -878,13 +910,13 @@ class DFINETransformer(nn.Module):
                     self.denoising_class_embed,
                     num_denoising=self.num_denoising,
                     label_noise_ratio=self.label_noise_ratio,
-                    box_noise_scale=1.0,
+                    box_noise_scale=self.box_noise_scale,
                 )
             )
         else:
             denoising_logits, denoising_bbox_unact, attn_mask, dn_meta = None, None, None, None
 
-        init_ref_contents, init_ref_points_unact, enc_topk_bboxes_list, enc_topk_logits_list = (
+        init_ref_contents, init_ref_points_unact, enc_topk_keypoints_list, enc_topk_bboxes_list, enc_topk_logits_list = (
             self._get_decoder_input(memory, spatial_shapes, denoising_logits, denoising_bbox_unact)
         )
 
@@ -895,7 +927,7 @@ class DFINETransformer(nn.Module):
             memory,
             spatial_shapes,
             self.dec_bbox_head,
-            self.dec_keypoints_head,
+            self.dec_keypoint_head,
             self.dec_score_head,
             self.query_pos_head,
             self.pre_bbox_head,
@@ -956,7 +988,8 @@ class DFINETransformer(nn.Module):
 
             out["enc_aux_outputs"] = self._set_aux_loss(
                 enc_topk_logits_list,
-                enc_topk_bboxes_list
+                enc_topk_bboxes_list,
+                enc_topk_keypoints_list,
             )
 
             out["pre_outputs"] = {
@@ -991,11 +1024,14 @@ class DFINETransformer(nn.Module):
         return keypoints.reshape(keypoints.shape[0], keypoints.shape[1], self.num_keypoints, 2)
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord):
+    def _set_aux_loss(self, outputs_class, outputs_coord, outputs_keypoints):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [{"pred_logits": a, "pred_boxes": b} for a, b in zip(outputs_class, outputs_coord)]
+        return [
+            {"pred_logits": a, "pred_boxes": b, "pred_keypoints": c}
+            for a, b, c in zip(outputs_class, outputs_coord, outputs_keypoints)
+        ]
 
     @torch.jit.unused
     def _set_aux_loss2(

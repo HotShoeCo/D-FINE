@@ -137,44 +137,6 @@ class DFINECriterion(nn.Module):
 
         return losses
 
-    def loss_keypoints(self, outputs, targets, indices, boxes_weight):
-        assert "pred_keypoints" in outputs, "Keypoint predictions not found in outputs"
-        batch_idx, src_idx = self._get_src_permutation_idx(indices)
-
-        src_keypoints = outputs["pred_keypoints"][batch_idx, src_idx]
-        selected_src_keypoints = []
-        selected_tgt_keypoints = []
-        num_valid_keypoints = 0
-
-        for t, (_, matched_indices) in zip(targets, indices):
-            if "keypoints" not in t:
-                continue
-
-            labels = t["labels"][matched_indices]
-            target_keypoints = t["keypoints"][matched_indices]
-
-            # For each matched instance, include all keypoints up to n_kpt (category-defined).
-            for label, tgt_kpt, pred_kpt in zip(labels, target_keypoints, src_keypoints):
-                coco_category_id = mscoco_label2category[label.item()]
-                layout = category_keypoint_layouts.get(coco_category_id, {"num_keypoints": 0})
-                n_kpt = layout["num_keypoints"]
-
-                if n_kpt > 0:
-                    selected_src_keypoints.append(pred_kpt[:n_kpt])
-                    selected_tgt_keypoints.append(tgt_kpt[:n_kpt])
-                    num_valid_keypoints += n_kpt
-
-        if num_valid_keypoints == 0:
-            return {"loss_keypoints": src_keypoints.sum() * 0}
-
-        src_kpts_tensor = torch.cat(selected_src_keypoints, dim=0)
-        tgt_kpts_tensor = torch.cat(selected_tgt_keypoints, dim=0)
-
-        loss = F.l1_loss(src_kpts_tensor, tgt_kpts_tensor, reduction="sum")
-        loss = loss / (num_valid_keypoints * 2)
-
-        return {"loss_keypoints": loss}
-
     
     def loss_local(self, outputs, targets, indices, num_boxes, T=5):
         """Compute Fine-Grained Localization (FGL) Loss
@@ -269,6 +231,53 @@ class DFINECriterion(nn.Module):
                     ) / (self.num_pos + self.num_neg)
 
         return losses
+
+    def loss_keypoints(self, outputs, targets, indices, num_boxes):
+        """Compute the L1 loss for keypoint regression, considering category layouts."""
+        assert "pred_keypoints" in outputs, "No pred_keypoints in outputs"
+
+        batch_idx, src_idx = self._get_src_permutation_idx(indices)
+        all_src_keypoints = outputs["pred_keypoints"]  # [batch_size, num_queries, num_kpts, 2]
+
+        total_keypoint_loss = 0.0
+        num_valid_keypoints = 0
+
+        for b_i, (t, (_, matched_indices)) in enumerate(zip(targets, indices)):
+            if "keypoints" not in t:
+                continue
+
+            labels = t["labels"][matched_indices]  # [num_matched_objects]
+            target_keypoints = t["keypoints"][matched_indices]  # [num_matched_objects, num_kpts_max, 2]
+            src_indices_current_image = src_idx[batch_idx == b_i]  # [num_matched_objects]
+
+            for match_idx, (label, tgt_kpt) in enumerate(zip(labels, target_keypoints)):
+                src_query_idx = src_indices_current_image[match_idx]
+                pred_kpt = all_src_keypoints[b_i, src_query_idx]  # [num_kpts_pred, 2]
+
+                coco_category_id = mscoco_label2category.get(label.item())
+                if coco_category_id is not None:
+                    layout = category_keypoint_layouts.get(coco_category_id, {"num_keypoints": 0})
+                    n_kpt = layout["num_keypoints"]
+
+                    if n_kpt > 0:
+                        # Ensure we're comparing the correct number of keypoints
+                        pred_kpt_relevant = pred_kpt[:n_kpt]
+                        tgt_kpt_relevant = tgt_kpt[:n_kpt]
+
+                        # Check if the target keypoints are actually annotated (non-zero)
+                        valid_mask = (tgt_kpt_relevant.abs().sum(dim=1) > 0).float().unsqueeze(-1)
+
+                        # Apply L1 loss only to valid keypoints
+                        loss = F.mse_loss(pred_kpt_relevant * valid_mask, tgt_kpt_relevant * valid_mask, reduction="sum")
+                        total_keypoint_loss += loss
+                        num_valid_keypoints += valid_mask.sum()
+
+        if num_valid_keypoints > 0:
+            loss_kpt = total_keypoint_loss / num_valid_keypoints
+        else:
+            loss_kpt = all_src_keypoints.sum() * 0.0  # Avoid division by zero
+
+        return {"loss_keypoints": loss_kpt}
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
@@ -424,8 +433,6 @@ class DFINECriterion(nn.Module):
 
             for i, aux_outputs in enumerate(outputs["enc_aux_outputs"]):
                 for loss in self.losses:
-                    if loss == "keypoints":
-                        continue  # Skip keypoints loss for encoder aux outputs
                     indices_in = indices_go if loss == "boxes" else cached_indices_enc[i]
                     num_boxes_in = num_boxes_go if loss == "boxes" else num_boxes
                     meta = self.get_loss_meta_info(loss, aux_outputs, enc_targets, indices_in)

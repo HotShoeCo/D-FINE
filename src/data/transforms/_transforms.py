@@ -71,14 +71,16 @@ class Letterboxed(T.Transform):
         super().__init__()
         if isinstance(size, int):
             size = (size, size)
-        self.size = (int(size[0]), int(size[1]))
+        self.size = size
         self.fill = fill
         self.padding_mode = padding_mode
 
     def make_params(self, inpt: Any) -> Dict[str, Any]:
         inpt = inpt if len(inpt) > 1 else inpt[0]
+
+        # Torch vision deals sizes in (h, w) format
         h, w = F.get_size(inpt[0])
-        target_h, target_w = self.size
+        target_w, target_h = self.size
         scale = min(target_h / h, target_w / w)
         new_h, new_w = int(h * scale), int(w * scale)
         pad_h, pad_w = target_h - new_h, target_w - new_w
@@ -91,7 +93,8 @@ class Letterboxed(T.Transform):
 
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:             
         resized = F.resize(inpt, params["new_size"])
-        return F.pad(resized, padding=params["padding"], fill=self.fill, padding_mode=self.padding_mode)
+        padded = F.pad(resized, padding=params["padding"], fill=self.fill, padding_mode=self.padding_mode)
+        return padded
 
 
 @register()
@@ -149,7 +152,8 @@ class NormalizeKeyPoints(T.Transform):
     def transform(self, inpt: KeyPoints, params: Dict[str, Any]) -> KeyPoints:
         height, width = inpt.canvas_size
         scale = torch.tensor([width, height], device=inpt.device)
-        return KeyPoints(inpt / scale, canvas_size=inpt.canvas_size)
+        scaled = KeyPoints(inpt / scale, canvas_size=inpt.canvas_size)
+        return scaled
 
 @register()
 class SanitizeBoundingBoxesWithKeyPoints(T.SanitizeBoundingBoxes):

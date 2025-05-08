@@ -21,7 +21,10 @@ class DetSolver(BaseSolver):
     def fit(self):
         self.train()
         args = self.cfg
-        metric_names = ["AP50:95", "AP50", "AP75", "APsmall", "APmedium", "APlarge"]
+        metric_names = [
+            "AP50:95", "AP50", "AP75", "APsmall", "APmedium", "APlarge",
+            "APkp", "APkp50", "APkp75", "APkpsmall", "APkpmedium", "APkplarge"
+        ]
 
         if self.use_wandb:
             import wandb
@@ -70,7 +73,7 @@ class DetSolver(BaseSolver):
                 if self.ema:
                     self.ema.decay = self.train_dataloader.collate_fn.ema_restart_decay
                     print(f"Refresh EMA at epoch {epoch} with decay {self.ema.decay}")
-                
+
                 best_stat = {
                     "epoch": -1,
                 }
@@ -136,7 +139,7 @@ class DetSolver(BaseSolver):
                 best_stat["epoch"] = epoch
                 for k in test_stats:
                     best_stat[k] = test_stats[k][0]
-                
+
                 best_stat_print = best_stat.copy()
                 print(f"New global best_stat: {best_stat_print}")
 
@@ -161,11 +164,17 @@ class DetSolver(BaseSolver):
                 "epoch": epoch,
                 "n_parameters": n_parameters,
             }
+            if "coco_eval_keypoints" in test_stats:
+                for idx, metric_name in enumerate(metric_names[6:]): # Add keypoint metrics to log_stats
+                    log_stats[f"test_{metric_name}"] = test_stats["coco_eval_keypoints"][idx]
 
             if self.use_wandb:
                 wandb_logs = {}
-                for idx, metric_name in enumerate(metric_names):
-                    wandb_logs[f"metrics/{metric_name}"] = test_stats["coco_eval_bbox"][idx]
+                for idx, metric_name in enumerate(metric_names[:6]):
+                    wandb_logs[f"metrics/bbox_{metric_name}"] = test_stats["coco_eval_bbox"][idx]
+                if "coco_eval_keypoints" in test_stats:
+                    for idx, metric_name in enumerate(metric_names[6:]):
+                        wandb_logs[f"metrics/keypoints_{metric_name}"] = test_stats["coco_eval_keypoints"][idx]
                 wandb_logs["epoch"] = epoch
                 wandb.log(wandb_logs)
 
@@ -208,7 +217,11 @@ class DetSolver(BaseSolver):
 
         if self.output_dir:
             dist_utils.save_on_master(
-                coco_evaluator.coco_eval["bbox"].eval, self.output_dir / "eval.pth"
+                coco_evaluator.coco_eval["bbox"].eval, self.output_dir / "eval_bbox.pth"
             )
+            if "keypoints" in coco_evaluator.coco_eval:
+                dist_utils.save_on_master(
+                    coco_evaluator.coco_eval["keypoints"].eval, self.output_dir / "eval_keypoints.pth"
+                )
 
         return

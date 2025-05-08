@@ -164,7 +164,7 @@ def evaluate(
 
     model.eval()
     criterion.eval()
-    coco_evaluator.cleanup()
+    coco_evaluator.reset()
 
     metric_logger = MetricLogger(delimiter="  ")
     # metric_logger.add_meter('class_error', SmoothedValue(window_size=1, fmt='{value:.2f}'))
@@ -237,31 +237,37 @@ def evaluate(
             gt.append(gt_item)
             preds.append(pred_item)
 
-            # # --- DEBUG VISUALIZATION ---
-            # from pathlib import Path
-            # from torchvision.utils import draw_keypoints, draw_bounding_boxes
-            # from torchvision.transforms.functional import to_pil_image, to_tensor
-            # from PIL import Image
+            # --- DEBUG VISUALIZATION ---
+            from pathlib import Path
+            from torchvision.utils import draw_keypoints, draw_bounding_boxes
+            from torchvision.transforms.functional import to_pil_image, to_tensor
+            from PIL import Image
 
-            # if dist_utils.is_main_process():
-            #     pred_dir = Path("/workspace/training/output/predictions")
-            #     pred_dir.mkdir(parents=True, exist_ok=True)
+            if dist_utils.is_main_process():
+                try:
+                    pred_dir = Path("/workspace/training/output/predictions")
+                    pred_dir.mkdir(parents=True, exist_ok=True)
 
-            #     im_pil = Image.open(target["image_path"]).convert("RGB")
-            #     img = (to_tensor(im_pil) * 255).to(torch.uint8)
+                    im_pil = Image.open(target["image_path"]).convert("RGB")
+                    img = (to_tensor(im_pil) * 255).to(torch.uint8)
 
+                    from torchvision.ops import box_convert
+                    gt_boxes_xyxy = box_convert(gt_item["boxes"].cpu(), in_fmt="cxcywh", out_fmt="xyxy") if gt_item["boxes"].shape[-1] == 4 else gt_item["boxes"].cpu()
+                    pred_boxes_xyxy = box_convert(pred_boxes.cpu(), in_fmt="cxcywh", out_fmt="xyxy") if pred_boxes.shape[-1] == 4 else pred_boxes.cpu()
 
-            #     img_out = draw_bounding_boxes(img.clone(), gt_item["boxes"].cpu(), colors="green")
-            #     img_out = draw_bounding_boxes(img_out, pred_boxes.cpu(), colors="red")
+                    img_out = draw_bounding_boxes(img.clone(), gt_boxes_xyxy, colors="green")
+                    img_out = draw_bounding_boxes(img_out, pred_boxes_xyxy, colors="red")
 
-            #     if "keypoints" in gt_item:
-            #         img_out = draw_keypoints(img_out, gt_item["keypoints"].cpu(), colors="green", radius=5)
-            #     if "keypoints" in pred_item:
-            #         img_out = draw_keypoints(img_out, pred_kpts.cpu(), colors="red", radius=5)
+                    if "keypoints" in gt_item:
+                        img_out = draw_keypoints(img_out, gt_item["keypoints"].cpu(), colors="green", radius=5)
+                    if "keypoints" in pred_item:
+                        img_out = draw_keypoints(img_out, pred_kpts.cpu(), colors="red", radius=5)
 
-            #     out_path = pred_dir / f"{image_id}_eval.png"
-            #     to_pil_image(img_out).save(out_path)
-            # # --- END DEBUG VISUALIZATION ---
+                    out_path = pred_dir / f"{image_id}_eval.png"
+                    to_pil_image(img_out).save(out_path)
+                except Exception as e:
+                    print(f"Error while visualizing prediction for image {image_id}: {e}")
+            # --- END DEBUG VISUALIZATION ---
 
         # After results are denormalized and all that, update coco results.
         if coco_evaluator is not None:

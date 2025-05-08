@@ -33,38 +33,14 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
     ]
     __share__ = ["remap_mscoco_category"]
 
-    def __init__(
-        self, img_folder, ann_file, transforms, return_masks=False, remap_mscoco_category=False, iou_types=None
-    ):
+    def __init__(self, img_folder, ann_file, transforms, return_masks=False, remap_mscoco_category=False):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(return_masks)
         self.img_folder = img_folder
-        self.iou_types = iou_types
         self.ann_file = ann_file
         self.return_masks = return_masks
         self.remap_mscoco_category = remap_mscoco_category
-
-        print(f"Loading images from {img_folder}.")
-        if self.iou_types:
-            print(f"Filtering images with invalid annotations for {self.iou_types}.")
-            valid_ids = []
-            for img_id in self.ids:
-                anns = self.coco.loadAnns(self.coco.getAnnIds(imgIds=img_id))
-                valid = True
-                if "keypoints" in self.iou_types:
-                    if not any("keypoints" in anno and sum(anno["keypoints"][2::3]) > 0 for anno in anns):
-                        valid = False
-                if "bbox" in self.iou_types:
-                    if not any("bbox" in anno and len(anno["bbox"]) == 4 for anno in anns):
-                        valid = False
-                if "segm" in self.iou_types:
-                    if not any("segmentation" in anno and anno["segmentation"] for anno in anns):
-                        valid = False
-                if valid:
-                    valid_ids.append(img_id)
-            print(f"Loading {len(valid_ids)} of {len(self.ids)} dataset images.")
-            self.ids = valid_ids
 
     def __getitem__(self, idx):
         img, target = self.load_item(idx)
