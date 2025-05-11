@@ -267,7 +267,7 @@ class DFINECriterion(nn.Module):
                         # Check if the target keypoints are actually annotated (non-zero)
                         valid_mask = (tgt_kpt_relevant.abs().sum(dim=1) > 0).float().unsqueeze(-1)
 
-                        # Apply L1 loss only to valid keypoints
+                        # Apply loss only to valid keypoints
                         loss = F.mse_loss(pred_kpt_relevant * valid_mask, tgt_kpt_relevant * valid_mask, reduction="sum")
                         total_keypoint_loss += loss
                         num_valid_keypoints += valid_mask.sum()

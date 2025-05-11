@@ -41,6 +41,7 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         self.ann_file = ann_file
         self.return_masks = return_masks
         self.remap_mscoco_category = remap_mscoco_category
+        print(f"Loading {len(self.ids)} images from {img_folder}.")
 
     def __getitem__(self, idx):
         img, target = self.load_item(idx)

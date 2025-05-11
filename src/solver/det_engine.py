@@ -164,16 +164,12 @@ def evaluate(
 
     model.eval()
     criterion.eval()
-    coco_evaluator.reset()
+    coco_evaluator.cleanup()
 
     metric_logger = MetricLogger(delimiter="  ")
     # metric_logger.add_meter('class_error', SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = "Test:"
-
-    # iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessor.keys())
     iou_types = coco_evaluator.iou_types
-    # coco_evaluator = CocoEvaluator(base_ds, iou_types)
-    # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
 
     gt: List[Dict[str, torch.Tensor]] = []
     preds: List[Dict[str, torch.Tensor]] = []
@@ -196,89 +192,25 @@ def evaluate(
 
         # TODO (lyuwenyu), fix dataset converted using `convert_to_coco_api`?
         results = postprocessor(outputs)
-
+        normalize_and_scale(samples, targets, results)
         # if 'segm' in postprocessor.keys():
         #     target_sizes = torch.stack([t["size"] for t in targets], dim=0)
         #     results = postprocessor['segm'](results, outputs, orig_target_sizes, target_sizes)
         
-        for idx, (target, result) in enumerate(zip(targets, results)):
-            # Predictions
-            image_id = target["image_id"].item()
-            orig_w, orig_h = target["orig_size"]
-            input_h, input_w = samples[idx].shape[-2:]
-
-            # Denormalize predictions from [0,1] space relative to the model input dim.
-            result["boxes"][:, [0, 2]] *= input_w
-            result["boxes"][:, [1, 3]] *= input_h
-            
-            # Scale back to original image size. (e.g, model outputs in 640x640 but sample image is 640x480).
-            pred_boxes = scale_boxes(result["boxes"], orig_w, orig_h, input_w, input_h)
-            pred_item = {
-                "boxes": pred_boxes,
-                "labels": result["labels"],
-                "scores": result["scores"],
-            }
-            
-            if "keypoints" in result:
-                # Same denorm, scale stuff.
-                result["keypoints"][..., 0] *= input_w
-                result["keypoints"][..., 1] *= input_h
-                pred_kpts = scale_keypoints(result["keypoints"], orig_w, orig_h, input_w, input_h)
-                pred_item["keypoints"] = pred_kpts
-
-            # Validator GT (Targets)
-            gt_item = {
-                "boxes": scale_boxes(target["boxes"], orig_w, orig_h, input_w, input_h),
-                "labels": target["labels"],
-            }
-            if "keypoints" in target:
-                gt_item["keypoints"] = scale_keypoints(target["keypoints"], orig_w, orig_h, input_w, input_h)
-
-            gt.append(gt_item)
-            preds.append(pred_item)
-
-            # --- DEBUG VISUALIZATION ---
-            from pathlib import Path
-            from torchvision.utils import draw_keypoints, draw_bounding_boxes
-            from torchvision.transforms.functional import to_pil_image, to_tensor
-            from PIL import Image
-
-            if dist_utils.is_main_process():
-                try:
-                    pred_dir = Path("/workspace/training/output/predictions")
-                    pred_dir.mkdir(parents=True, exist_ok=True)
-
-                    im_pil = Image.open(target["image_path"]).convert("RGB")
-                    img = (to_tensor(im_pil) * 255).to(torch.uint8)
-
-                    from torchvision.ops import box_convert
-                    gt_boxes_xyxy = box_convert(gt_item["boxes"].cpu(), in_fmt="cxcywh", out_fmt="xyxy") if gt_item["boxes"].shape[-1] == 4 else gt_item["boxes"].cpu()
-                    pred_boxes_xyxy = box_convert(pred_boxes.cpu(), in_fmt="cxcywh", out_fmt="xyxy") if pred_boxes.shape[-1] == 4 else pred_boxes.cpu()
-
-                    img_out = draw_bounding_boxes(img.clone(), gt_boxes_xyxy, colors="green")
-                    img_out = draw_bounding_boxes(img_out, pred_boxes_xyxy, colors="red")
-
-                    if "keypoints" in gt_item:
-                        img_out = draw_keypoints(img_out, gt_item["keypoints"].cpu(), colors="green", radius=5)
-                    if "keypoints" in pred_item:
-                        img_out = draw_keypoints(img_out, pred_kpts.cpu(), colors="red", radius=5)
-
-                    out_path = pred_dir / f"{image_id}_eval.png"
-                    to_pil_image(img_out).save(out_path)
-                except Exception as e:
-                    print(f"Error while visualizing prediction for image {image_id}: {e}")
-            # --- END DEBUG VISUALIZATION ---
-
-        # After results are denormalized and all that, update coco results.
         if coco_evaluator is not None:
-            res = {target["image_id"].item(): output for target, output in zip(targets, results)}
-            coco_evaluator.update(res)
+            coco_result = {target["image_id"].item(): output for target, output in zip(targets, results)}
+            coco_evaluator.update(coco_result)
+
+        gt_i, preds_i = format_metrics(targets, results, postprocessor.remap_mscoco_category)
+        gt.extend(gt_i)
+        preds.extend(preds_i)
 
     # Conf matrix, F1, Precision, Recall, box IoU
     metrics = Validator(gt, preds).compute_metrics(extended=True)
-    print("Validation Metrics:")
+    print("Metrics:")
     for k, v in sorted(metrics.items()):
         print(f"  {k:30}: {v:.4f}" if isinstance(v, float) else f"  {k:30}: {v}")
+
     if use_wandb:
         metrics = {f"metrics/{k}": v for k, v in metrics.items()}
         metrics["epoch"] = epoch
@@ -287,17 +219,13 @@ def evaluate(
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
+
+    stats = {}
     if coco_evaluator is not None:
         coco_evaluator.synchronize_between_processes()
-
-    # accumulate predictions from all images
-    if coco_evaluator is not None:
         coco_evaluator.accumulate()
         coco_evaluator.summarize()
 
-    stats = {}
-    # stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    if coco_evaluator is not None:
         if "bbox" in iou_types:
             stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
         if "segm" in iou_types:
@@ -306,3 +234,107 @@ def evaluate(
             stats["coco_eval_keypoints"] = coco_evaluator.coco_eval["keypoints"].stats.tolist()
 
     return stats, coco_evaluator
+
+
+def normalize_and_scale(samples, targets, results):
+    for idx, (target, result) in enumerate(zip(targets, results)):
+        # Scales
+        w_target, h_target = target["orig_size"]
+        h_sample, w_sample = samples[idx].shape[-2:]
+
+
+        # Prediction Results
+        # Denormalize predictions from [0,1] space relative to the model input dim.
+        result["boxes"][:, [0, 2]] *= w_sample
+        result["boxes"][:, [1, 3]] *= h_sample
+        
+        # Scale back to original image size. (e.g, model outputs in 640x640 but sample image is 640x480).
+        result["boxes"] = scale_boxes(result["boxes"], w_target, h_target, w_sample, h_sample)
+        
+        if "keypoints" in result:
+            # Same denorm, scale stuff.
+            k = result["keypoints"]
+            k[..., 0] *= w_sample
+            k[..., 1] *= h_sample
+            result["keypoints"] = scale_keypoints(k, w_target, h_target, w_sample, h_sample)
+
+
+        # Targets
+        # Targets are not normalized; just need scaling.
+        target["boxes"] = scale_boxes(target["boxes"], w_target, h_target, w_sample, h_sample)
+
+        if "keypoints" in target:
+            target["keypoints"] = scale_keypoints(target["keypoints"], w_target, h_target, w_sample, h_sample)
+
+def format_metrics(targets, results, remap_mscoco_category):
+    gt: List[Dict[str, torch.Tensor]] = []
+    preds: List[Dict[str, torch.Tensor]] = []
+
+    for idx, (target, result) in enumerate(zip(targets, results)):
+        # Targets
+        gt_i = {
+            "boxes": target["boxes"],
+            "labels": target["labels"],
+        }
+
+        if "keypoints" in target:
+            gt_i["keypoints"] = target["keypoints"]
+
+        gt.append(gt_i)
+
+        # Predictions
+        pred_labels = (
+            torch.tensor([mscoco_category2label[int(x.item())] for x in result["labels"].flatten()])
+            .to(result["labels"].device)
+            .reshape(result["labels"].shape)
+        ) if remap_mscoco_category else result["labels"]
+
+        pred_i = {
+            "boxes": result["boxes"], 
+            "labels": pred_labels, 
+            "scores": result["scores"]
+        }
+
+        if "keypoints" in result:
+            pred_i["keypoints"] = result["keypoints"]
+
+        preds.append(pred_i)
+
+        # --- DEBUG VISUALIZATION ---
+        image_id = target["image_id"].item()
+
+        if idx > 20:
+            continue 
+        
+        from pathlib import Path
+        from torchvision.utils import draw_keypoints, draw_bounding_boxes
+        from torchvision.transforms.functional import to_pil_image, to_tensor
+        from PIL import Image
+
+        if dist_utils.is_main_process():
+            try:
+                pred_dir = Path("/workspace/training/output/predictions")
+                pred_dir.mkdir(parents=True, exist_ok=True)
+
+                im_pil = Image.open(target["image_path"]).convert("RGB")
+                img = (to_tensor(im_pil) * 255).to(torch.uint8)
+
+                from torchvision.ops import box_convert
+                gt_boxes_xyxy = box_convert(gt_i["boxes"].cpu(), in_fmt="cxcywh", out_fmt="xyxy") if gt_i["boxes"].shape[-1] == 4 else gt_i["boxes"].cpu()
+                pred_boxes_xyxy = box_convert(pred_i["boxes"].cpu(), in_fmt="cxcywh", out_fmt="xyxy") if pred_i["boxes"].shape[-1] == 4 else pred_i["boxes"].cpu()
+
+                img_out = draw_bounding_boxes(img.clone(), gt_boxes_xyxy, colors="green")
+                img_out = draw_bounding_boxes(img_out, pred_boxes_xyxy, colors="red")
+
+                if "keypoints" in gt_i:
+                    img_out = draw_keypoints(img_out, gt_i["keypoints"].cpu(), colors="green", radius=5)
+                if "keypoints" in pred_i:
+                    img_out = draw_keypoints(img_out, pred_i["keypoints"].cpu(), colors="red", radius=5)
+
+                out_path = pred_dir / f"{image_id}_eval.png"
+                to_pil_image(img_out).save(out_path)
+            except Exception as e:
+                print(f"Error while visualizing prediction for image {image_id}: {e}")
+        # --- END DEBUG VISUALIZATION ---
+
+    return gt, preds

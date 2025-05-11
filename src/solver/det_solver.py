@@ -14,6 +14,7 @@ import torch
 
 from ..misc import dist_utils, stats
 from ._solver import BaseSolver
+from .best_stat import BestStatTracker
 from .det_engine import evaluate, train_one_epoch
 
 
@@ -21,10 +22,7 @@ class DetSolver(BaseSolver):
     def fit(self):
         self.train()
         args = self.cfg
-        metric_names = [
-            "AP50:95", "AP50", "AP75", "APsmall", "APmedium", "APlarge",
-            "APkp", "APkp50", "APkp75", "APkpsmall", "APkpmedium", "APkplarge"
-        ]
+        metric_names = ["AP50:95", "AP50", "AP75", "APsmall", "APmedium", "APlarge"]
 
         if self.use_wandb:
             import wandb
@@ -39,9 +37,8 @@ class DetSolver(BaseSolver):
         n_parameters, model_stats = stats(self.cfg)
         print(model_stats)
         print("-" * 42 + "Start training" + "-" * 43)
-        best_stat = {
-            "epoch": -1,
-        }
+        best_stat_tracker = BestStatTracker(mode="pareto")
+
         if self.last_epoch > 0:
             module = self.ema.module if self.ema else self.model
             test_stats, coco_evaluator = evaluate(
@@ -54,11 +51,8 @@ class DetSolver(BaseSolver):
                 self.last_epoch,
                 self.use_wandb
             )
-            for k in test_stats:
-                best_stat[k] = test_stats[k][0]
-            print(f"best_stat: {best_stat}")
 
-        best_stat_print = best_stat.copy()
+        best_stat_tracker = BestStatTracker(mode="pareto")  # Or "single"
         start_time = time.time()
         start_epoch = self.last_epoch + 1
         for epoch in range(start_epoch, args.epochs):
@@ -73,11 +67,6 @@ class DetSolver(BaseSolver):
                 if self.ema:
                     self.ema.decay = self.train_dataloader.collate_fn.ema_restart_decay
                     print(f"Refresh EMA at epoch {epoch} with decay {self.ema.decay}")
-
-                best_stat = {
-                    "epoch": -1,
-                }
-                best_stat_print = best_stat.copy()
 
             train_stats = train_one_epoch(
                 self.model,
@@ -102,7 +91,7 @@ class DetSolver(BaseSolver):
 
             self.last_epoch += 1
 
-            if self.output_dir:
+            if self.output_dir and epoch < self.train_dataloader.collate_fn.stop_epoch:
                 checkpoint_paths = [self.output_dir / "last.pth"]
                 # Extra checkpoint before LR drop and every checkpoint_freq epochs.
                 if (epoch + 1) % args.checkpoint_freq == 0:
@@ -128,35 +117,33 @@ class DetSolver(BaseSolver):
                     for i, v in enumerate(test_stats[k]):
                         self.writer.add_scalar(f"Test/{k}_{i}".format(k), v, epoch)
 
-            # Check if all test_stats are >= best_stat
-            is_better = all(
-                (k not in best_stat or test_stats[k][0] >= best_stat[k])
-                for k in test_stats
-            )
 
-            if is_better:
-                # This epoch is globally better across all tracked stats
-                best_stat["epoch"] = epoch
-                for k in test_stats:
-                    best_stat[k] = test_stats[k][0]
 
-                best_stat_print = best_stat.copy()
-                print(f"New global best_stat: {best_stat_print}")
+            # Update best stats
+            current_stats = {
+                "epoch": epoch,
+                "coco_eval_bbox": test_stats["coco_eval_bbox"][0],
+                "coco_eval_keypoints": test_stats["coco_eval_keypoints"][0] if "coco_eval_keypoints" in test_stats else 0,
+            }
 
+            best_stat_tracker.update(current_stats)
+
+            if best_stat_tracker.is_current_best(epoch):
+                best_stat = best_stat_tracker.get_best_model_stats()
+                print(f"New best model (epoch {best_stat.get('epoch', -1)}): {best_stat}")
                 if self.output_dir:
                     if epoch >= self.train_dataloader.collate_fn.stop_epoch:
                         dist_utils.save_on_master(self.state_dict(), self.output_dir / "best_stg2.pth")
                     else:
                         dist_utils.save_on_master(self.state_dict(), self.output_dir / "best_stg1.pth")
             else:
-                # Always print current vs best for all tracked keys
-                if dist_utils.is_main_process():
-                    best_epoch = best_stat['epoch']
-                    print(f"Current epoch {epoch} did not exceed best epoch {best_epoch}:")
-                    for k in test_stats:
-                        current_value = test_stats[k][0]
-                        best_value = best_stat.get(k, None)
-                        print(f"  {k}: current = {current_value:.4f}, best = {best_value if best_value is None else f'{best_value:.4f}'}")
+                best_stat = best_stat_tracker.get_best_model_stats()
+                best_epoch = best_stat.get('epoch', -1)
+                print(f"Epoch {epoch} did not become the best. Best epoch: {best_epoch}")
+                for k in test_stats:
+                    current_value = test_stats[k][0]
+                    best_value = best_stat.get(k, None)
+                    print(f"  {k}: current = {current_value:.4f}, best = {best_value if best_value is None else f'{best_value:.4f}'}")
 
             log_stats = {
                 **{f"train_{k}": v for k, v in train_stats.items()},
@@ -164,17 +151,20 @@ class DetSolver(BaseSolver):
                 "epoch": epoch,
                 "n_parameters": n_parameters,
             }
+
             if "coco_eval_keypoints" in test_stats:
-                for idx, metric_name in enumerate(metric_names[6:]): # Add keypoint metrics to log_stats
-                    log_stats[f"test_{metric_name}"] = test_stats["coco_eval_keypoints"][idx]
+                for idx, metric_name in enumerate(metric_names): # Add keypoint metrics to log_stats
+                    log_stats[f"test_{metric_name}kp"] = test_stats["coco_eval_keypoints"][idx]
 
             if self.use_wandb:
                 wandb_logs = {}
-                for idx, metric_name in enumerate(metric_names[:6]):
+                for idx, metric_name in enumerate(metric_names):
                     wandb_logs[f"metrics/bbox_{metric_name}"] = test_stats["coco_eval_bbox"][idx]
+                
                 if "coco_eval_keypoints" in test_stats:
-                    for idx, metric_name in enumerate(metric_names[6:]):
-                        wandb_logs[f"metrics/keypoints_{metric_name}"] = test_stats["coco_eval_keypoints"][idx]
+                    for idx, metric_name in enumerate(metric_names):
+                        wandb_logs[f"metrics/keypoints_{metric_name}kp"] = test_stats["coco_eval_keypoints"][idx]
+                
                 wandb_logs["epoch"] = epoch
                 wandb.log(wandb_logs)
 

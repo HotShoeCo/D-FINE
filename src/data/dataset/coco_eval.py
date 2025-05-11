@@ -32,12 +32,9 @@ class CocoEvaluator:
         coco_gt = copy.deepcopy(coco_gt)
         self.coco_gt = coco_gt
         self.iou_types = iou_types
-        self.reset()
+        self.cleanup()
 
-    def reset(self):
-        """
-        Called between batches to reset the evaluator data.
-        """
+    def cleanup(self):
         self.coco_eval = {}
         self.img_ids = []
         self.eval_imgs = {k: [] for k in self.iou_types}
@@ -55,7 +52,7 @@ class CocoEvaluator:
                     iouType=iou_type,
                     print_function=print,
                     separate_eval=True,
-                    extra_calc=True,
+                    extra_calc=False,
                     kpt_oks_sigmas=oks_sigmas,
                 )
             else:
@@ -64,7 +61,7 @@ class CocoEvaluator:
                     iouType=iou_type,
                     print_function=print,
                     separate_eval=True,
-                    extra_calc=True,
+                    extra_calc=False,
                 )
 
     def update(self, predictions):
@@ -75,23 +72,14 @@ class CocoEvaluator:
             results = self.prepare(predictions, iou_type)
             coco_eval = self.coco_eval[iou_type]
             
-            # with redirect_stdout(io.StringIO()):
-            print("evaluate 1")
-            coco_dt = self.coco_gt.loadRes(results) if results else COCO()
+            with redirect_stdout(io.StringIO()):
+                coco_dt = self.coco_gt.loadRes(results) if results else COCO()
+            
+            coco_eval = self.coco_eval[iou_type]
             coco_eval.cocoDt = coco_dt
             coco_eval.params.imgIds = list(img_ids)
-            print("evaluate 2")
-            coco_eval.evaluate()
-            print("evaluate 3")
-
-            self.eval_imgs[iou_type].append(
-                np.array(coco_eval._evalImgs_cpp).reshape(
-                    len(coco_eval.params.catIds),
-                    len(coco_eval.params.areaRng),
-                    len(coco_eval.params.imgIds),
-                )
-            )
-            print("evaluate 4")
+            img_ids, eval_imgs = evaluate(coco_eval)
+            self.eval_imgs[iou_type].append(eval_imgs)
 
     def synchronize_between_processes(self):
         for iou_type in self.iou_types:
@@ -223,10 +211,10 @@ def merge(img_ids, eval_imgs):
 
     merged_eval_imgs = []
     for p in all_eval_imgs:
-        merged_eval_imgs.append(p)
+        merged_eval_imgs.extend(p)
 
     merged_img_ids = np.array(merged_img_ids)
-    merged_eval_imgs = np.concatenate(merged_eval_imgs, 2)
+    merged_eval_imgs = np.concatenate(merged_eval_imgs, 1)
 
     # keep only unique (and in sorted order) images
     merged_img_ids, idx = np.unique(merged_img_ids, return_index=True)
@@ -240,6 +228,17 @@ def create_common_coco_eval(coco_eval, img_ids, eval_imgs):
     img_ids = list(img_ids)
     eval_imgs = list(eval_imgs.flatten())
 
-    coco_eval.evalImgs = eval_imgs
+    coco_eval._evalImgs_cpp = eval_imgs
     coco_eval.params.imgIds = img_ids
     coco_eval._paramsEval = copy.deepcopy(coco_eval.params)
+
+
+def evaluate(imgs):
+    with redirect_stdout(io.StringIO()):
+        imgs.evaluate()
+    eval_imgs = np.asarray(imgs._evalImgs_cpp).reshape(
+        -1,
+        len(imgs.params.areaRng),
+        len(imgs.params.imgIds)
+    )
+    return imgs.params.imgIds, eval_imgs
