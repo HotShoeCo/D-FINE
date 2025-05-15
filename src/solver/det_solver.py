@@ -37,7 +37,6 @@ class DetSolver(BaseSolver):
         n_parameters, model_stats = stats(self.cfg)
         print(model_stats)
         print("-" * 42 + "Start training" + "-" * 43)
-        best_stat_tracker = BestStatTracker(mode="pareto")
 
         if self.last_epoch > 0:
             module = self.ema.module if self.ema else self.model
@@ -52,7 +51,7 @@ class DetSolver(BaseSolver):
                 self.use_wandb
             )
 
-        best_stat_tracker = BestStatTracker(mode="pareto")  # Or "single"
+        best_stat_tracker = BestStatTracker(mode="pareto")
         start_time = time.time()
         start_epoch = self.last_epoch + 1
         for epoch in range(start_epoch, args.epochs):

@@ -60,8 +60,8 @@ class DetDETRPostProcessor(nn.Module):
         if kwargs is not None:
             boxes = box_revert(
                 boxes,
-                in_fmt="cxcywh",
-                out_fmt="xyxy",
+                in_fmt="CXCYWH",
+                out_fmt="XYXY",
                 process_fmt=self.box_process_format,
                 normalized=True,
                 **kwargs,

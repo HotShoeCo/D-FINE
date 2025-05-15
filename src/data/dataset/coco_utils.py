@@ -141,7 +141,7 @@ def convert_to_coco_api(ds):
         img_dict["height"] = height
         dataset["images"].append(img_dict)
         bboxes = targets["boxes"].clone()
-        bboxes[:, 2:] -= bboxes[:, :2]  # xyxy -> xywh
+        bboxes[:, 2:] -= bboxes[:, :2]  # XYXY -> XYWH
         bboxes = bboxes.tolist()
         labels = targets["labels"].tolist()
         areas = targets["area"].tolist()

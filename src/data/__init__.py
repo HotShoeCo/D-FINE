@@ -3,7 +3,6 @@ Copied from RT-DETR (https://github.com/lyuwenyu/RT-DETR)
 Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
-from ._misc import convert_to_tv_tensor
 from .dataloader import *
 from .dataset import *
 from .transforms import *

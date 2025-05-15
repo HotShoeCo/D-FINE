@@ -11,11 +11,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scipy.optimize import linear_sum_assignment
-from torchvision.tv_tensors import KeyPoints
+import torchvision.transforms.v2.functional as TF
 
+from scipy.optimize import linear_sum_assignment
+from torch import Tensor
 from ...core import register
-from .box_ops import box_cxcywh_to_xyxy, generalized_box_iou
+from .box_ops import generalized_box_iou
 
 
 @register()
@@ -88,11 +89,23 @@ class HungarianMatcher(nn.Module):
                 outputs["pred_logits"].flatten(0, 1).softmax(-1)
             )  # [batch_size * num_queries, num_classes]
 
-        out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
+        out_bbox = torch.cat(
+            [
+                TF.convert_bounding_box_format(b, new_format="XYXY")
+                for b in outputs["pred_boxes"]
+            ],
+            dim=0
+        )  # [batch_size * num_queries, 4]
 
         # Also concat the target labels and boxes
         tgt_ids = torch.cat([v["labels"] for v in targets])
-        tgt_bbox = torch.cat([v["boxes"] for v in targets])
+        tgt_bbox = torch.cat(
+            [
+                TF.convert_bounding_box_format(t["boxes"], new_format="XYXY") 
+                for t in targets
+            ],
+            dim=0
+        )
 
         # Compute the classification cost. Contrary to the loss, we don't use the NLL,
         # but approximate it in 1 - proba[target class].
@@ -113,11 +126,8 @@ class HungarianMatcher(nn.Module):
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
 
         # Compute the giou cost betwen boxes
-        cost_giou = -generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
+        cost_giou = -generalized_box_iou(out_bbox, tgt_bbox)
 
-        # Compute keypoint cost
-        cost_keypoints = self._get_keypoint_cost(outputs, targets)
-        
         # Base cost matrix: always computed
         C = (
             self.cost_bbox * cost_bbox
@@ -125,8 +135,11 @@ class HungarianMatcher(nn.Module):
             + self.cost_giou * cost_giou
         )
 
-        # If we have matching keypoints, add the cost_keypoints
-        if cost_keypoints is not None:
+        # Compute keypoint cost
+        if "pred_keypoints" in outputs: 
+            out_kpts = torch.cat([k.data for k in outputs["pred_keypoints"]], dim=0)  # [batch_size * num_queries, 17, 2]
+            tgt_kpts = torch.cat([k["keypoints"] for k in targets])
+            cost_keypoints = self.keypoint_l1_distance(out_kpts, tgt_kpts)
             C = C + self.cost_keypoint * cost_keypoints
 
         C = torch.nan_to_num(C, nan=1.0).view(bs, num_queries, -1)
@@ -175,26 +188,18 @@ class HungarianMatcher(nn.Module):
         # C.copy_(C_original)
         return indices_list
     
-    def _get_keypoint_cost(self, outputs, targets):
-        if "pred_keypoints" not in outputs:
-            return None
+    def keypoint_l1_distance(self, pred_kpts: Tensor, tgt_kpts: Tensor) -> Tensor:
+        """
+        Compute the average L1 distance between predicted and target keypoints.
 
-        pred_kpts = outputs["pred_keypoints"]
-        out_kpts = pred_kpts.float()  # [B, Q, K, 2]
+        pred_kpts: [P, K, 2] - P predictions, K keypoints
+        tgt_kpts:  [T, K, 2] - T targets, K keypoints
 
-        # Only collect targets that have keypoints
-        tgt_kpts_list = [t["keypoints"] for t in targets if "keypoints" in t and t["keypoints"].numel() > 0]
-        if len(tgt_kpts_list) == 0:
-            return None
+        Returns:
+            Tensor of shape [P, T] with average L1 distance per keypoint.
+        """
+        pred_exp = pred_kpts[:, None, :, :]  # [P, 1, K, 2]
+        tgt_exp  = tgt_kpts[None, :, :, :]   # [1, T, K, 2]
 
-        tgt_kpts = torch.cat(tgt_kpts_list).float()
-
-        if out_kpts.dim() == 4:
-            out_kpts = out_kpts.flatten(0, 1)  # [B*Q, K, 2]
-
-        pred_exp = out_kpts[:, None, :, :2]
-        tgt_exp = tgt_kpts[None, :, :, :]
-        diff = torch.abs(pred_exp - tgt_exp)
-
-        cost_kpts = diff.sum(dim=(-1, -2)) / diff.shape[-2]
-        return cost_kpts
+        diff = torch.abs(pred_exp - tgt_exp)  # [P, T, K, 2]
+        return diff.sum(dim=(-1, -2)) / diff.shape[-2]  # [P, T]

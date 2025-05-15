@@ -2,6 +2,7 @@ import numpy as np
 import onnxruntime as ort
 import torch
 import torchvision
+from torchvision.transforms.v2.functional import convert_bounding_box_format
 from utils import yolo_insert_nms
 
 
@@ -22,7 +23,7 @@ class YOLO11(torch.nn.Module):
         pred: torch.Tensor = self.model(x)[0]  # n 84 8400,
         pred = pred.permute(0, 2, 1)
         boxes, scores = pred.split([4, 80], dim=-1)
-        boxes = torchvision.ops.box_convert(boxes, in_fmt="cxcywh", out_fmt="xyxy")
+        boxes = convert_bounding_box_format(boxes, old_format="CXCYWH", new_format="XYXY")
 
         return boxes, scores
 

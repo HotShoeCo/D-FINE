@@ -7,6 +7,7 @@ import torch
 import torch.distributed
 import torch.nn.functional as F
 import torchvision
+from torchvision.transforms.v2.functional import convert_bounding_box_format
 
 from ...core import register
 from ...misc import box_ops, dist_utils
@@ -26,7 +27,7 @@ class DetCriterion(torch.nn.Module):
         num_classes=80,
         alpha=0.75,
         gamma=2.0,
-        box_fmt="cxcywh",
+        box_fmt="CXCYWH",
         matcher=None,
     ):
         """
@@ -34,7 +35,7 @@ class DetCriterion(torch.nn.Module):
             losses (list[str]): requested losses, support ['boxes', 'vfl', 'focal']
             weight_dict (dict[str, float)]: corresponding losses weight, including
                 ['loss_bbox', 'loss_giou', 'loss_vfl', 'loss_focal']
-            box_fmt (str): in box format, 'cxcywh' or 'xyxy'
+            box_fmt (str): in box format, 'CXCYWH' or 'XYXY'
             matcher (Matcher): matcher used to match source to target
         """
         super().__init__()
@@ -117,10 +118,8 @@ class DetCriterion(torch.nn.Module):
         src_boxes = outputs["pred_boxes"][idx]
         target_boxes = torch.cat([t["boxes"][j] for t, (_, j) in zip(targets, indices)], dim=0)
 
-        src_boxes = torchvision.ops.box_convert(src_boxes, in_fmt=self.box_fmt, out_fmt="xyxy")
-        target_boxes = torchvision.ops.box_convert(
-            target_boxes, in_fmt=self.box_fmt, out_fmt="xyxy"
-        )
+        src_boxes = convert_bounding_box_format(src_boxes, old_format=self.box_fmt, new_format="XYXY")
+        target_boxes = convert_bounding_box_format(target_boxes, old_format=self.box_fmt, new_format="XYXY")
         iou, _ = box_ops.elementwise_box_iou(src_boxes.detach(), target_boxes)
 
         src_logits: torch.Tensor = outputs["pred_logits"]
@@ -154,10 +153,8 @@ class DetCriterion(torch.nn.Module):
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
         losses["loss_bbox"] = loss_bbox.sum() / num_boxes
 
-        src_boxes = torchvision.ops.box_convert(src_boxes, in_fmt=self.box_fmt, out_fmt="xyxy")
-        target_boxes = torchvision.ops.box_convert(
-            target_boxes, in_fmt=self.box_fmt, out_fmt="xyxy"
-        )
+        src_boxes = convert_bounding_box_format(src_boxes, old_format=self.box_fmt, new_format="XYXY")
+        target_boxes = convert_bounding_box_format(target_boxes, old_format=self.box_fmt, new_format="XYXY")
         loss_giou = 1 - box_ops.elementwise_generalized_box_iou(src_boxes, target_boxes)
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
@@ -169,10 +166,8 @@ class DetCriterion(torch.nn.Module):
         target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
         losses = {}
-        src_boxes = torchvision.ops.box_convert(src_boxes, in_fmt=self.box_fmt, out_fmt="xyxy")
-        target_boxes = torchvision.ops.box_convert(
-            target_boxes, in_fmt=self.box_fmt, out_fmt="xyxy"
-        )
+        src_boxes = convert_bounding_box_format(src_boxes, old_format=self.box_fmt, new_format="XYXY")
+        target_boxes = convert_bounding_box_format(target_boxes, old_format=self.box_fmt, new_format="XYXY")
         loss_giou = 1 - box_ops.elementwise_generalized_box_iou(src_boxes, target_boxes)
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses

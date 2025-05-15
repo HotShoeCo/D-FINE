@@ -11,7 +11,7 @@ train_dataloader:
         - {type: Resize, size: [640, 640], }
         - {type: SanitizeBoundingBoxesWithKeyPoints, min_size: 1}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
-        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+        - {type: ConvertBoxes, fmt: 'CXCYWH', normalize: True}
       policy:
         name: stop_epoch
         epoch: 72 # epoch in [71, ~) stop `ops`

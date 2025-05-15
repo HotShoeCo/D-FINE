@@ -11,6 +11,7 @@ import torchvision
 import torchvision.transforms.functional as TVF
 from PIL import Image
 from sympy import im
+from torchvision.tv_tensors import BoundingBoxes
 
 try:
     from defusedxml.ElementTree import parse as ET_parse
@@ -18,7 +19,6 @@ except ImportError:
     from xml.etree.ElementTree import parse as ET_parse
 
 from ...core import register
-from .._misc import convert_to_tv_tensor
 from ._dataset import DetDataset
 
 
@@ -75,9 +75,7 @@ class VOCDetection(torchvision.datasets.VOCDetection, DetDataset):
 
         w, h = image.size
         boxes = torch.tensor(output["boxes"]) if len(output["boxes"]) > 0 else torch.zeros(0, 4)
-        output["boxes"] = convert_to_tv_tensor(
-            boxes, "boxes", box_format="xyxy", spatial_size=[h, w]
-        )
+        output["boxes"] = BoundingBoxes(boxes, format="XYXY", canvas_size=[h, w])
         output["labels"] = torch.tensor([self.labels_map[lab] for lab in output["labels"]])
         output["area"] = torch.tensor(output["area"])
         output["iscrowd"] = torch.tensor(output["iscrowd"])

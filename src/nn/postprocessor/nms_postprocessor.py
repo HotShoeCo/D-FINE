@@ -10,6 +10,7 @@ import torch.distributed
 import torch.nn.functional as F
 import torchvision
 from torch import Tensor
+from torchvision.transforms.v2.functional import convert_bounding_box_format
 
 from ...core import register
 
@@ -25,7 +26,7 @@ class DetNMSPostProcessor(torch.nn.Module):
         iou_threshold=0.7,
         score_threshold=0.01,
         keep_topk=300,
-        box_fmt="cxcywh",
+        box_fmt="CXCYWH",
         logit_fmt="sigmoid",
     ) -> None:
         super().__init__()
@@ -39,7 +40,7 @@ class DetNMSPostProcessor(torch.nn.Module):
 
     def forward(self, outputs: Dict[str, Tensor], orig_target_sizes: Tensor):
         logits, boxes = outputs["pred_logits"], outputs["pred_boxes"]
-        pred_boxes = torchvision.ops.box_convert(boxes, in_fmt=self.box_fmt, out_fmt="xyxy")
+        pred_boxes = convert_bounding_box_format(boxes, old_format=self.box_fmt, new_format="XYXY")
         pred_boxes *= orig_target_sizes.repeat(1, 2).unsqueeze(1)
 
         values, pred_labels = torch.max(logits, dim=-1)

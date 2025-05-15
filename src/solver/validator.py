@@ -28,8 +28,6 @@ class Validator:
         self.preds = preds
         self.conf_thresh = conf_thresh
         self.iou_thresh = iou_thresh
-        # Squared distance threshold for keypoint localization (e.g. 5 pixels)
-        self.kpt_threshold_sq = 25
         self.thresholds = np.arange(0.2, 1.0, 0.05)
         self.conf_matrix = None
 
@@ -67,47 +65,25 @@ class Validator:
             )
 
             extended_metrics[f"iou_{key}"] = np.mean(value["IoUs"])
-            if "KPT_TP" in value:
-                tp = value["KPT_TP"]
-                fp = value["KPT_FP"]
-                fn = value["KPT_FN"]
-                extended_metrics[f"kpt_precision_{key}"] = tp / (tp + fp) if (tp + fp) > 0 else 0
-                extended_metrics[f"kpt_recall_{key}"] = tp / (tp + fn) if (tp + fn) > 0 else 0
 
         precision = tps / (tps + fps) if (tps + fps) > 0 else 0
         recall = tps / (tps + fns) if (tps + fns) > 0 else 0
         f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
         iou = np.mean(ious).item() if ious else 0
-
-        tp_kpt_total = sum(v["KPT_TP"] for v in self.metrics_per_class.values())
-        fp_kpt_total = sum(v["KPT_FP"] for v in self.metrics_per_class.values())
-        fn_kpt_total = sum(v["KPT_FN"] for v in self.metrics_per_class.values())
-
-        overall_kpt_precision = tp_kpt_total / (tp_kpt_total + fp_kpt_total) if (tp_kpt_total + fp_kpt_total) > 0 else 0
-        overall_kpt_recall = tp_kpt_total / (tp_kpt_total + fn_kpt_total) if (tp_kpt_total + fn_kpt_total) > 0 else 0
-
         return {
             "f1": f1,
+            "precision": precision,
+            "recall": recall,
             "iou": iou,
             "TPs": tps,
             "FPs": fps,
             "FNs": fns,
-            "precision": precision,
-            "recall": recall,
-            "kpt_TPs": tp_kpt_total,
-            "kpt_FPs": fp_kpt_total,
-            "kpt_FNs": fn_kpt_total,
-            "kpt_precision": overall_kpt_precision,
-            "kpt_recall": overall_kpt_recall,
             "extended_metrics": extended_metrics,
         }
 
     def _compute_metrics_and_confusion_matrix(self, preds):
         # Initialize per-class metrics
-        metrics_per_class = defaultdict(lambda: {
-            "TPs": 0, "FPs": 0, "FNs": 0, "IoUs": [],
-            "KPT_TP": 0, "KPT_FP": 0, "KPT_FN": 0
-        })
+        metrics_per_class = defaultdict(lambda: {"TPs": 0, "FPs": 0, "FNs": 0, "IoUs": []})
 
         # Collect all class IDs
         all_classes = set()
@@ -125,7 +101,6 @@ class Validator:
             pred_labels = pred["labels"]
             gt_boxes = gt["boxes"]
             gt_labels = gt["labels"]
-            image_gt_label_set = set(gt_labels.tolist())
 
             n_preds = len(pred_boxes)
             n_gts = len(gt_boxes)
@@ -172,33 +147,6 @@ class Validator:
                     if pred_label == gt_label:
                         metrics_per_class[gt_label]["TPs"] += 1
                         metrics_per_class[gt_label]["IoUs"].append(iou.item())
-
-                        # Keypoint-level metrics
-                        if "keypoints" in pred and "keypoints" in gt and (gt["keypoints"][gt_idx].abs().sum(dim=1) > 0).any():
-                            pred_kpts = pred["keypoints"][pred_idx]
-                            gt_kpts   = gt["keypoints"][gt_idx]
-                            K = gt_kpts.shape[0]
-                            pred_kpts = pred_kpts[:K]
-                            gt_present   = (gt_kpts.abs().sum(dim=1) > 0)
-                            pred_present = (pred_kpts.abs().sum(dim=1) > 0)
-                            fn_missing = int((gt_present & ~pred_present).sum().item())
-                            fp_extra   = int((pred_present & ~gt_present).sum().item())
-                            common_mask = gt_present & pred_present
-                            tp_local   = 0
-                            fn_bad_loc = 0
-                            if common_mask.any():
-                                diffs   = pred_kpts[common_mask, :2] - gt_kpts[common_mask, :2]
-                                dist_sq = (diffs ** 2).sum(dim=1)
-                                tp_local   = int((dist_sq <= self.kpt_threshold_sq).sum().item())
-                                fn_bad_loc = int((dist_sq >  self.kpt_threshold_sq).sum().item())
-
-                            metrics_per_class[gt_label]["KPT_TP"] += tp_local
-                            metrics_per_class[gt_label]["KPT_FN"] += fn_missing + fn_bad_loc
-                            metrics_per_class[gt_label]["KPT_FP"] += fp_extra
-
-                            # Now, account for predicted keypoints in matched objects that didn't match a GT keypoint
-                            unmatched_pred_kpts_in_match = int((pred_present & ~gt_present).sum().item())
-                            metrics_per_class[gt_label]["KPT_FP"] += unmatched_pred_kpts_in_match
                     else:
                         # Misclassification
                         metrics_per_class[gt_label]["FNs"] += 1
@@ -210,9 +158,6 @@ class Validator:
             unmatched_pred_indices = set(range(n_preds)) - matched_pred_indices
             for pred_idx in unmatched_pred_indices:
                 pred_label = pred_labels[pred_idx].item()
-                # Only penalize predictions for classes present in GT (e.g., person)
-                if pred_label not in image_gt_label_set:
-                    continue
                 pred_cls_idx = class_to_idx[pred_label]
                 # Update confusion matrix: background row
                 conf_matrix[n_classes, pred_cls_idx] += 1
@@ -319,32 +264,4 @@ def filter_preds(preds, conf_thresh):
         pred["scores"] = pred["scores"][keep_idxs]
         pred["boxes"] = pred["boxes"][keep_idxs]
         pred["labels"] = pred["labels"][keep_idxs]
-        pred["keypoints"] = pred["keypoints"][keep_idxs]
     return preds
-
-
-def scale_boxes(boxes, w_orig, h_orig, w_resized, h_resized):
-    """
-    boxes in format: [x1, y1, x2, y2], absolute values
-    orig_shape: [height, width]
-    resized_shape: [height, width]
-    """
-    scale_x = w_orig / w_resized
-    scale_y = h_orig / h_resized
-    boxes[:, 0] *= scale_x
-    boxes[:, 2] *= scale_x
-    boxes[:, 1] *= scale_y
-    boxes[:, 3] *= scale_y
-    return boxes
-
-def scale_keypoints(keypoints, w_orig, h_orig, w_resized, h_resized):
-    """
-    keypoints in format: [N, K, 3] with (x, y, visibility), absolute values
-    orig_shape: [height, width]
-    resized_shape: [height, width]
-    """
-    scale_x = w_orig / w_resized
-    scale_y = h_orig / h_resized
-    keypoints[..., 0] *= scale_x
-    keypoints[..., 1] *= scale_y
-    return keypoints

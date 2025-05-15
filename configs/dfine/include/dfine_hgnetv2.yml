@@ -72,7 +72,7 @@ DFINECriterion:
   weight_dict: {
     loss_vfl: 1,
     loss_bbox: 5,
-    loss_keypoints: 2,
+    loss_keypoints: 1,
     loss_giou: 2,
     loss_fgl: 0.15,
     loss_ddf: 1.5,

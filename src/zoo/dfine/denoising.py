@@ -4,7 +4,7 @@ Modifications Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
 
 import torch
 
-from .box_ops import box_cxcywh_to_xyxy, box_xyxy_to_cxcywh
+from torchvision.transforms.v2.functional import convert_bounding_box_format
 from .utils import inverse_sigmoid
 
 
@@ -67,7 +67,7 @@ def get_contrastive_denoising_training_group(
         input_query_class = torch.where(mask & pad_gt_mask, new_label, input_query_class)
 
     if box_noise_scale > 0:
-        known_bbox = box_cxcywh_to_xyxy(input_query_bbox)
+        known_bbox = convert_bounding_box_format(input_query_bbox, old_format="CXCYWH", new_format="XYXY")
         diff = torch.tile(input_query_bbox[..., 2:] * 0.5, [1, 1, 2]) * box_noise_scale
         rand_sign = torch.randint_like(input_query_bbox, 0, 2) * 2.0 - 1.0
         rand_part = torch.rand_like(input_query_bbox)
@@ -81,7 +81,7 @@ def get_contrastive_denoising_training_group(
         #                         rand_sign * upper_bound / (upper_bound+1) / rand_part, rand_sign)
         known_bbox += rand_sign * rand_part * diff
         known_bbox = torch.clip(known_bbox, min=0.0, max=1.0)
-        input_query_bbox = box_xyxy_to_cxcywh(known_bbox)
+        input_query_bbox = convert_bounding_box_format(known_bbox, old_format="XYXY", new_format="CXCYWH")
         input_query_bbox[input_query_bbox < 0] *= -1
         input_query_bbox_unact = inverse_sigmoid(input_query_bbox)
 

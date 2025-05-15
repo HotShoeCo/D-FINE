@@ -13,6 +13,8 @@ from typing import Dict, Iterable, List
 import numpy as np
 import torch
 import torch.amp
+import torchvision.transforms.v2.functional as F
+
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
@@ -20,7 +22,7 @@ from ..data import CocoEvaluator
 from ..data.dataset import mscoco_category2label
 from ..misc import MetricLogger, SmoothedValue, dist_utils, save_samples
 from ..optim import ModelEMA, Warmup
-from .validator import Validator, scale_boxes, scale_keypoints
+from .validator import Validator
 
 
 def train_one_epoch(
@@ -63,7 +65,7 @@ def train_one_epoch(
         metas = dict(epoch=epoch, step=i, global_step=global_step, epoch_step=len(data_loader))
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            save_samples(samples, targets, output_dir, "train", normalized=True, box_fmt="cxcywh")
+            save_samples(samples, targets, output_dir, "train", normalized=True)
 
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
@@ -72,8 +74,7 @@ def train_one_epoch(
             with torch.autocast(device_type=str(device), cache_enabled=True):
                 outputs = model(samples, targets=targets)
 
-            if torch.isnan(outputs["pred_boxes"]).any() or torch.isinf(outputs["pred_boxes"]).any():
-                print(outputs["pred_boxes"])
+            if any(torch.isnan(b.data).any() or torch.isinf(b.data).any() for b in outputs["pred_boxes"]):
                 state = model.state_dict()
                 new_state = {}
                 for key, value in model.state_dict().items():
@@ -181,7 +182,7 @@ def evaluate(
         global_step = epoch * len(data_loader) + i
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            save_samples(samples, targets, output_dir, "val", normalized=False, box_fmt="xyxy")
+            save_samples(samples, targets, output_dir, "val", normalized=False)
 
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
@@ -192,7 +193,10 @@ def evaluate(
 
         # TODO (lyuwenyu), fix dataset converted using `convert_to_coco_api`?
         results = postprocessor(outputs)
-        normalize_and_scale(samples, targets, results)
+        denormalize_results(samples, targets, results)
+
+        if i < 20:
+            render_results(samples, targets, results)
         # if 'segm' in postprocessor.keys():
         #     target_sizes = torch.stack([t["size"] for t in targets], dim=0)
         #     results = postprocessor['segm'](results, outputs, orig_target_sizes, target_sizes)
@@ -206,15 +210,15 @@ def evaluate(
         preds.extend(preds_i)
 
     # Conf matrix, F1, Precision, Recall, box IoU
-    metrics = Validator(gt, preds).compute_metrics(extended=True)
-    print("Metrics:")
-    for k, v in sorted(metrics.items()):
-        print(f"  {k:30}: {v:.4f}" if isinstance(v, float) else f"  {k:30}: {v}")
+    # metrics = Validator(gt, preds).compute_metrics(extended=True)
+    # print("Metrics:")
+    # for k, v in sorted(metrics.items()):
+    #     print(f"  {k:30}: {v:.4f}" if isinstance(v, float) else f"  {k:30}: {v}")
 
-    if use_wandb:
-        metrics = {f"metrics/{k}": v for k, v in metrics.items()}
-        metrics["epoch"] = epoch
-        wandb.log(metrics)
+    # if use_wandb:
+    #     metrics = {f"metrics/{k}": v for k, v in metrics.items()}
+    #     metrics["epoch"] = epoch
+    #     wandb.log(metrics)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -236,35 +240,60 @@ def evaluate(
     return stats, coco_evaluator
 
 
-def normalize_and_scale(samples, targets, results):
-    for idx, (target, result) in enumerate(zip(targets, results)):
-        # Scales
-        w_target, h_target = target["orig_size"]
-        h_sample, w_sample = samples[idx].shape[-2:]
+def denormalize_results(samples, targets, results):
+    for result in results:
+        size = F.get_image_size(samples)
 
+        result["boxes"] = F.resize(result["boxes"], size)
 
-        # Prediction Results
-        # Denormalize predictions from [0,1] space relative to the model input dim.
-        result["boxes"][:, [0, 2]] *= w_sample
-        result["boxes"][:, [1, 3]] *= h_sample
-        
-        # Scale back to original image size. (e.g, model outputs in 640x640 but sample image is 640x480).
-        result["boxes"] = scale_boxes(result["boxes"], w_target, h_target, w_sample, h_sample)
-        
         if "keypoints" in result:
-            # Same denorm, scale stuff.
-            k = result["keypoints"]
-            k[..., 0] *= w_sample
-            k[..., 1] *= h_sample
-            result["keypoints"] = scale_keypoints(k, w_target, h_target, w_sample, h_sample)
+            result["keypoints"] = F.resize(result["keypoints"], size)
 
 
-        # Targets
-        # Targets are not normalized; just need scaling.
-        target["boxes"] = scale_boxes(target["boxes"], w_target, h_target, w_sample, h_sample)
+def render_results(samples, targets, results):
+    import torch
+    from torchvision.utils import draw_bounding_boxes, draw_keypoints, save_image
+    from pathlib import Path
 
-        if "keypoints" in target:
-            target["keypoints"] = scale_keypoints(target["keypoints"], w_target, h_target, w_sample, h_sample)
+    try:
+        pred_dir = Path("/workspace/training/output/predictions")
+        pred_dir.mkdir(parents=True, exist_ok=True)
+
+
+        # Loop over each image in the batch
+        for idx in range(samples.size(0)):
+            img = samples[idx]
+            # Convert to uint8 image tensor for drawing
+            if img.dtype != torch.uint8:
+                img_disp = (img * 255).clamp(0, 255).to(torch.uint8)
+            else:
+                img_disp = img
+
+            # Draw ground-truth boxes and keypoints
+            gt = targets[idx]
+            gt_boxes = F.convert_bounding_box_format(gt["boxes"], new_format="XYXY")
+            gt_labels = [str(int(l.item())) for l in gt["labels"]]
+            img_overlay = draw_bounding_boxes(img_disp, gt_boxes, labels=gt_labels, colors="#00FF00", width=2)
+
+            # Draw predicted boxes, scores, and keypoints
+            pred = results[idx]
+            pred_boxes = F.convert_bounding_box_format(pred["boxes"], new_format="XYXY")
+            pred_scores = pred.get("scores", torch.zeros(pred_boxes.size(0)))
+            pred_labels = [
+                f"{int(l.item())}:{s:.2f}" for l, s in zip(pred["labels"].flatten(), pred_scores.flatten())
+            ]
+            img_overlay = draw_bounding_boxes(img_overlay, pred_boxes, labels=pred_labels, colors="#00FFFF", width=2)
+            # Now draw ground-truth keypoints on top of boxes
+            if "keypoints" in gt:
+                img_overlay = draw_keypoints(img_overlay, gt["keypoints"], colors="#00FF00", radius=3)
+            # Then draw predicted keypoints in bright yellow
+            if "keypoints" in pred:
+                img_overlay = draw_keypoints(img_overlay, pred["keypoints"], colors="#FFFF00", radius=3)
+
+            # Save annotated image to disk
+            save_image(img_overlay.float() / 255.0, pred_dir / f"render_{idx}.png")
+    except Exception as e:
+        print(f"render_results error: {e}")
 
 def format_metrics(targets, results, remap_mscoco_category):
     gt: List[Dict[str, torch.Tensor]] = []
@@ -299,42 +328,5 @@ def format_metrics(targets, results, remap_mscoco_category):
             pred_i["keypoints"] = result["keypoints"]
 
         preds.append(pred_i)
-
-        # --- DEBUG VISUALIZATION ---
-        image_id = target["image_id"].item()
-
-        if idx > 20:
-            continue 
-        
-        from pathlib import Path
-        from torchvision.utils import draw_keypoints, draw_bounding_boxes
-        from torchvision.transforms.functional import to_pil_image, to_tensor
-        from PIL import Image
-
-        if dist_utils.is_main_process():
-            try:
-                pred_dir = Path("/workspace/training/output/predictions")
-                pred_dir.mkdir(parents=True, exist_ok=True)
-
-                im_pil = Image.open(target["image_path"]).convert("RGB")
-                img = (to_tensor(im_pil) * 255).to(torch.uint8)
-
-                from torchvision.ops import box_convert
-                gt_boxes_xyxy = box_convert(gt_i["boxes"].cpu(), in_fmt="cxcywh", out_fmt="xyxy") if gt_i["boxes"].shape[-1] == 4 else gt_i["boxes"].cpu()
-                pred_boxes_xyxy = box_convert(pred_i["boxes"].cpu(), in_fmt="cxcywh", out_fmt="xyxy") if pred_i["boxes"].shape[-1] == 4 else pred_i["boxes"].cpu()
-
-                img_out = draw_bounding_boxes(img.clone(), gt_boxes_xyxy, colors="green")
-                img_out = draw_bounding_boxes(img_out, pred_boxes_xyxy, colors="red")
-
-                if "keypoints" in gt_i:
-                    img_out = draw_keypoints(img_out, gt_i["keypoints"].cpu(), colors="green", radius=5)
-                if "keypoints" in pred_i:
-                    img_out = draw_keypoints(img_out, pred_i["keypoints"].cpu(), colors="red", radius=5)
-
-                out_path = pred_dir / f"{image_id}_eval.png"
-                to_pil_image(img_out).save(out_path)
-            except Exception as e:
-                print(f"Error while visualizing prediction for image {image_id}: {e}")
-        # --- END DEBUG VISUALIZATION ---
 
     return gt, preds

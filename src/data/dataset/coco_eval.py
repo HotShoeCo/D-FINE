@@ -12,10 +12,10 @@ import faster_coco_eval.core.mask as mask_util
 import numpy as np
 import io
 import torch
-
-from .coco_dataset import category_keypoint_layouts
+import torchvision.transforms.v2.functional as F
 
 from faster_coco_eval import COCO, COCOeval_faster
+from .coco_dataset import category_keypoint_layouts
 from ...core import register
 from ...misc import dist_utils
 
@@ -72,12 +72,12 @@ class CocoEvaluator:
             results = self.prepare(predictions, iou_type)
             coco_eval = self.coco_eval[iou_type]
             
-            with redirect_stdout(io.StringIO()):
-                coco_dt = self.coco_gt.loadRes(results) if results else COCO()
-            
+            #with redirect_stdout(io.StringIO()):
+            coco_dt = self.coco_gt.loadRes(results) if results else COCO()
+            ##
             coco_eval = self.coco_eval[iou_type]
             coco_eval.cocoDt = coco_dt
-            coco_eval.params.imgIds = list(img_ids)
+            coco_eval.params.imgIds = img_ids
             img_ids, eval_imgs = evaluate(coco_eval)
             self.eval_imgs[iou_type].append(eval_imgs)
 
@@ -110,8 +110,7 @@ class CocoEvaluator:
             if len(prediction) == 0:
                 continue
 
-            boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
+            boxes = F.convert_bounding_box_format(prediction["boxes"], new_format="XYWH").tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
 
@@ -119,11 +118,11 @@ class CocoEvaluator:
                 [
                     {
                         "image_id": original_id,
-                        "category_id": labels[k],
+                        "category_id": labels[i],
                         "bbox": box,
-                        "score": scores[k],
+                        "score": scores[i],
                     }
-                    for k, box in enumerate(boxes)
+                    for i, box in enumerate(boxes)
                 ]
             )
         return coco_results
@@ -168,8 +167,7 @@ class CocoEvaluator:
             if len(prediction) == 0:
                 continue
 
-            boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
+            boxes = F.convert_bounding_box_format(prediction["boxes"], new_format="XYWH").tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
 
@@ -186,19 +184,15 @@ class CocoEvaluator:
                 [
                     {
                         "image_id": original_id,
-                        "category_id": labels[k],
-                        "keypoints": keypoint,
-                        "score": scores[k],
+                        "category_id": labels[i],
+                        "bbox": b,
+                        "keypoints": k,
+                        "score": scores[i],
                     }
-                    for k, keypoint in enumerate(keypoints)
+                    for i, (b, k) in enumerate(zip(boxes, keypoints))
                 ]
             )
         return coco_results
-
-
-def convert_to_xywh(boxes):
-    xmin, ymin, xmax, ymax = boxes.unbind(1)
-    return torch.stack((xmin, ymin, xmax - xmin, ymax - ymin), dim=1)
 
 
 def merge(img_ids, eval_imgs):
@@ -234,8 +228,9 @@ def create_common_coco_eval(coco_eval, img_ids, eval_imgs):
 
 
 def evaluate(imgs):
-    with redirect_stdout(io.StringIO()):
-        imgs.evaluate()
+    #with redirect_stdout(io.StringIO()):
+    imgs.evaluate()
+    ##
     eval_imgs = np.asarray(imgs._evalImgs_cpp).reshape(
         -1,
         len(imgs.params.areaRng),

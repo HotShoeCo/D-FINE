@@ -4,7 +4,7 @@ Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
 
 import torch
 
-from .box_ops import box_xyxy_to_cxcywh
+from torchvision.transforms.v2.functional import convert_bounding_box_format
 
 
 def weighting_function(reg_max, up, reg_scale, deploy=False):
@@ -138,8 +138,7 @@ def distance2bbox(points, distance, reg_scale):
     y2 = points[..., 1] + (0.5 * reg_scale + distance[..., 3]) * (points[..., 3] / reg_scale)
 
     bboxes = torch.stack([x1, y1, x2, y2], -1)
-
-    return box_xyxy_to_cxcywh(bboxes)
+    return convert_bounding_box_format(bboxes, old_format="XYXY", new_format="CXCYWH")
 
 
 def bbox2distance(points, bbox, reg_max, reg_scale, up, eps=0.1):
@@ -148,7 +147,7 @@ def bbox2distance(points, bbox, reg_max, reg_scale, up, eps=0.1):
 
     Args:
         points (Tensor): (n, 4) [x, y, w, h], where (x, y) is the center.
-        bbox (Tensor): (n, 4) bounding boxes in "xyxy" format.
+        bbox (Tensor): (n, 4) bounding boxes in "XYXY" format.
         reg_max (float): Maximum bin value.
         reg_scale (float): Controling curvarture of W(n).
         up (Tensor): Controling upper bounds of W(n).

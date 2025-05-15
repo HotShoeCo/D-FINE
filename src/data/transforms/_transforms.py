@@ -14,24 +14,14 @@ import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
 from ...core import register, create
-from .._misc import (
-    BoundingBoxes,
-    Image,
-    KeyPoints,
-    Mask,
-    SanitizeBoundingBoxes,
-    Video,
-    _boxes_keys,
-    convert_to_tv_tensor,
-)
-from torchvision.tv_tensors import wrap
+from torchvision.tv_tensors import wrap, BoundingBoxes, Image, KeyPoints, Mask, Video
 
 torchvision.disable_beta_transforms_warning()
 
 
 ColorJitter = register()(T.ColorJitter)
+ConvertBoundingBoxFormat = register()(T.ConvertBoundingBoxFormat)
 GaussianBlur = register()(T.GaussianBlur)
-Normalize = register()(T.Normalize)
 RandomAffine = register()(T.RandomAffine)
 RandomCrop = register()(T.RandomCrop)
 RandomErasing = register()(T.RandomErasing)
@@ -77,8 +67,6 @@ class Letterboxed(T.Transform):
 
     def make_params(self, inpt: Any) -> Dict[str, Any]:
         inpt = inpt if len(inpt) > 1 else inpt[0]
-
-        # Torch vision deals sizes in (h, w) format
         h, w = F.get_size(inpt[0])
         target_w, target_h = self.size
         scale = min(target_h / h, target_w / w)
@@ -95,30 +83,6 @@ class Letterboxed(T.Transform):
         resized = F.resize(inpt, params["new_size"])
         padded = F.pad(resized, padding=params["padding"], fill=self.fill, padding_mode=self.padding_mode)
         return padded
-
-
-@register()
-class ConvertBoxes(T.Transform):
-    _transformed_types = (BoundingBoxes,)
-
-    def __init__(self, fmt="", normalize=False) -> None:
-        super().__init__()
-        self.fmt = fmt
-        self.normalize = normalize
-
-    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        spatial_size = getattr(inpt, _boxes_keys[1])
-        if self.fmt:
-            in_fmt = inpt.format.value.lower()
-            inpt = torchvision.ops.box_convert(inpt, in_fmt=in_fmt, out_fmt=self.fmt.lower())
-            inpt = convert_to_tv_tensor(
-                inpt, key="boxes", box_format=self.fmt.upper(), spatial_size=spatial_size
-            )
-
-        if self.normalize:
-            inpt = inpt / torch.tensor(spatial_size[::-1]).tile(2)[None]
-
-        return inpt
 
 
 @register()
@@ -142,23 +106,32 @@ class ConvertPILImage(T.Transform):
 
         return inpt
 
+
 @register()
-class NormalizeKeyPoints(T.Transform):
-    _transformed_types = (KeyPoints,)
+class NormalizeAnnotations(T.Resize):
+    """
+    A sneaky way of using Resize to normalize just TVTensor types, not images.
+    """
+
+    _transformed_types = (BoundingBoxes, KeyPoints,)
 
     def __init__(self) -> None:
-        super().__init__()
-    
-    def transform(self, inpt: KeyPoints, params: Dict[str, Any]) -> KeyPoints:
-        height, width = inpt.canvas_size
-        scale = torch.tensor([width, height], device=inpt.device)
-        scaled = KeyPoints(inpt / scale, canvas_size=inpt.canvas_size)
-        return scaled
+        super().__init__(size=(1, 1))
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        ret = super().transform(inpt, params)
+        return ret
+
+
 
 @register()
 class SanitizeBoundingBoxesWithKeyPoints(T.SanitizeBoundingBoxes):
+    """
+    Until SanitizeBoundingBoxes supports KeyPoints, this is the way.
+    """
 
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        # Code copied from pytorch source with KeyPoints added.
         is_label = params["labels"] is not None and any(inpt is label for label in params["labels"])
         is_bounding_boxes_or_mask_or_keypoints = isinstance(
             inpt, (BoundingBoxes, Mask, KeyPoints)
@@ -177,6 +150,9 @@ class SanitizeBoundingBoxesWithKeyPoints(T.SanitizeBoundingBoxes):
 
 @register()
 class RandomApply:
+    """
+    Just a thin wrapper around T.RandomApply since the config-driven instantiation wasn't working for passing in constructed transform types.
+    """
 
     def __new__(cls, transform: dict, p: float = 1.0):
         # Extract and build the inner transform

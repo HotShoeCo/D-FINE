@@ -10,14 +10,14 @@ import faster_coco_eval.core.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
+import torchvision.transforms.v2.functional as F
 import os
 from PIL import Image
 
 from ...core import register
-from .._misc import convert_to_tv_tensor
 from ._dataset import DetDataset
 
-from torchvision.tv_tensors import wrap
+from torchvision.tv_tensors import BoundingBoxes, KeyPoints, Mask
 
 torchvision.disable_beta_transforms_warning()
 faster_coco_eval.init_as_pycocotools()
@@ -61,16 +61,16 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
             image, target = self.prepare(image, target)
 
         target["idx"] = torch.tensor([idx])
-        spatial_size = image.size[::-1]
+        canvas_size = F.get_size(image)
 
         if "boxes" in target:
-            target["boxes"] = convert_to_tv_tensor(target["boxes"], key="boxes", spatial_size=spatial_size)
+            target["boxes"] = BoundingBoxes(target["boxes"], format="XYWH", canvas_size=canvas_size)
 
         if "keypoints" in target:
-            target["keypoints"] = convert_to_tv_tensor(target["keypoints"], key="keypoints", spatial_size=spatial_size)
+            target["keypoints"] = KeyPoints(target["keypoints"], canvas_size=canvas_size)
 
         if "masks" in target:
-            target["masks"] = convert_to_tv_tensor(target["masks"], key="masks")
+            target["masks"] = Mask(target["masks"])
 
         return image, target
 
@@ -298,5 +298,11 @@ mscoco_category2label = {k: i for i, k in enumerate(mscoco_category2name.keys())
 mscoco_label2category = {v: k for k, v in mscoco_category2label.items()}
 
 category_keypoint_layouts = {
-    1: { "num_keypoints": 17 },
+    1: { 
+        "num_keypoints": 17,
+        "sigmas": [
+            0.26, 0.25, 0.25, 0.35, 0.35, 0.79, 0.79, 0.72, 0.72, 0.62,
+            0.62, 1.07, 1.07, 0.87, 0.89, 0.79, 0.96
+        ] 
+    },
 }
