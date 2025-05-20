@@ -77,10 +77,10 @@ class OvInfer:
         boxes = infer_result["boxes"]
         for i in range(self.query_num):
             if scores[0, i] > score_threshold:
-                cx = boxes[0, i, 0] * self.ratio
-                cy = boxes[0, i, 1] * self.ratio
-                bx = boxes[0, i, 2] * self.ratio
-                by = boxes[0, i, 3] * self.ratio
+                cx = boxes[0, i, 0] / self.ratio
+                cy = boxes[0, i, 1] / self.ratio
+                bx = boxes[0, i, 2] / self.ratio
+                by = boxes[0, i, 3] / self.ratio
                 cv2.rectangle(
                     draw_image, (int(cx), int(cy), int(bx - cx), int(by - cy)), (255, 0, 0), 1
                 )
