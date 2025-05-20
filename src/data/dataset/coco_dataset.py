@@ -36,7 +36,7 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
     def __init__(self, img_folder, ann_file, transforms, return_masks=False, remap_mscoco_category=False):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
-        self.prepare = ConvertCocoPolysToMask(return_masks)
+        self.prepare = ConvertCocoPolysToMask(return_masks) # Returns boxes in XYXY format.
         self.img_folder = img_folder
         self.ann_file = ann_file
         self.return_masks = return_masks
@@ -48,6 +48,47 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         if self._transforms is not None:
             img, target, _ = self._transforms(img, target, self)
         return img, target
+    
+    def render_results(self, image, targets):
+        import torch
+        from torchvision.utils import draw_bounding_boxes, draw_keypoints, save_image
+        from pathlib import Path
+
+        try:
+            pred_dir = Path("/workspace/training/output/predictions")
+            pred_dir.mkdir(parents=True, exist_ok=True)
+
+            # Convert PIL Image or tensor to uint8 image tensor for drawing
+            if isinstance(image, Image.Image):
+                image = F.pil_to_tensor(image)
+            elif hasattr(image, "dtype") and image.dtype != torch.uint8:
+                image = (image * 255).clamp(0, 255).to(torch.uint8)
+
+            # Draw ground-truth boxes and keypoints
+            gt = targets
+            gt_boxes = F.convert_bounding_box_format(gt["boxes"], new_format="XYXY")
+            gt_labels = gt["labels"]
+            # Ensure labels and colors are sequences
+            labels_list = [str(int(l)) for l in gt_labels] if hasattr(gt_labels, "__iter__") else [str(int(gt_labels))]
+            img_overlay = draw_bounding_boxes(
+                image,
+                gt_boxes,
+                labels=labels_list,
+                colors=["#00FF00"] * len(labels_list),
+                width=2,
+            )
+
+            # Draw ground-truth keypoints on top of boxes
+            if "keypoints" in gt:
+                img_overlay = draw_keypoints(img_overlay, gt["keypoints"], colors="#FFFF00", radius=3)
+
+            # Save annotated image to disk
+            image_id = gt["image_id"][0]
+            save_image(img_overlay.float() / 255.0, pred_dir / f"{image_id}_gt.png")
+        except Exception as e:
+            print(f"render_results error: {e}")
+
+            
 
     def load_item(self, idx):
         image, target = super(CocoDetection, self).__getitem__(idx)
@@ -64,7 +105,9 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         canvas_size = F.get_size(image)
 
         if "boxes" in target:
-            target["boxes"] = BoundingBoxes(target["boxes"], format="XYWH", canvas_size=canvas_size)
+            # ConvertCocoPolysToMask puts boxes in XYXY format; COCO annotations are XYWH and subsequent code expects that.
+            boxes_xyxy = BoundingBoxes(target["boxes"], format="XYXY", canvas_size=canvas_size)
+            target["boxes"] = F.convert_bounding_box_format(boxes_xyxy, new_format="XYWH")
 
         if "keypoints" in target:
             target["keypoints"] = KeyPoints(target["keypoints"], canvas_size=canvas_size)
@@ -72,6 +115,7 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         if "masks" in target:
             target["masks"] = Mask(target["masks"])
 
+        self.render_results(image, target)
         return image, target
 
     def extra_repr(self) -> str:

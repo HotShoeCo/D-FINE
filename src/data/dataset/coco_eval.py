@@ -47,22 +47,27 @@ class CocoEvaluator:
 
         for iou_type in self.iou_types:
             if iou_type == "keypoints":
-                self.coco_eval[iou_type] = COCOeval_faster(
+                coco_eval = COCOeval_faster(
                     self.coco_gt,
                     iouType=iou_type,
                     print_function=print,
                     separate_eval=True,
-                    extra_calc=False,
+                    extra_calc=True,
                     kpt_oks_sigmas=oks_sigmas,
                 )
             else:
-                self.coco_eval[iou_type] = COCOeval_faster(
+                coco_eval = COCOeval_faster(
                     self.coco_gt,
                     iouType=iou_type,
                     print_function=print,
                     separate_eval=True,
-                    extra_calc=False,
+                    extra_calc=True,
                 )
+
+            # Dynamically limit evaluation to categories present in annotations
+            # coco_eval.params.catIds = [] 
+            # coco_eval.params.imgIds = [] # These are appended in update()
+            self.coco_eval[iou_type] = coco_eval
 
     def update(self, predictions):
         img_ids = list(np.unique(list(predictions.keys())))
@@ -70,15 +75,15 @@ class CocoEvaluator:
 
         for iou_type in self.iou_types:
             results = self.prepare(predictions, iou_type)
-            coco_eval = self.coco_eval[iou_type]
-            
             #with redirect_stdout(io.StringIO()):
             coco_dt = self.coco_gt.loadRes(results) if results else COCO()
-            ##
+            #
+
             coco_eval = self.coco_eval[iou_type]
             coco_eval.cocoDt = coco_dt
-            coco_eval.params.imgIds = img_ids
+            coco_eval.params.imgIds = self.img_ids
             img_ids, eval_imgs = evaluate(coco_eval)
+
             self.eval_imgs[iou_type].append(eval_imgs)
 
     def synchronize_between_processes(self):
@@ -167,7 +172,6 @@ class CocoEvaluator:
             if len(prediction) == 0:
                 continue
 
-            boxes = F.convert_bounding_box_format(prediction["boxes"], new_format="XYWH").tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
 
@@ -185,11 +189,10 @@ class CocoEvaluator:
                     {
                         "image_id": original_id,
                         "category_id": labels[i],
-                        "bbox": b,
                         "keypoints": k,
                         "score": scores[i],
                     }
-                    for i, (b, k) in enumerate(zip(boxes, keypoints))
+                    for i, k in enumerate(keypoints)
                 ]
             )
         return coco_results

@@ -4,6 +4,7 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
 from ._transforms import (
+    ClampBoundingBoxes,
     ConvertBoundingBoxFormat,
     ConvertPILImage,
     EmptyTransform,

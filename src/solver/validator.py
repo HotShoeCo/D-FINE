@@ -264,4 +264,7 @@ def filter_preds(preds, conf_thresh):
         pred["scores"] = pred["scores"][keep_idxs]
         pred["boxes"] = pred["boxes"][keep_idxs]
         pred["labels"] = pred["labels"][keep_idxs]
+
+        if "keypoints" in pred:
+            pred["keypoints"] = pred["keypoints"][keep_idxs]
     return preds

@@ -3,12 +3,10 @@ copy and modified https://github.com/pytorch/vision/blob/main/references/detecti
 
 Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
-
-import faster_coco_eval.core.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
-import torchvision.transforms.functional as TVF
+import faster_coco_eval.core.mask as coco_mask
 from faster_coco_eval import COCO
 
 
@@ -56,21 +54,24 @@ class ConvertCocoPolysToMask:
         if anno and "keypoints" in anno[0]:
             keypoints = [obj["keypoints"] for obj in anno]
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
-            if keypoints is not None and keypoints.numel() > 0:
-                # COCO data is (x, y, v).
-                keypoints = keypoints.view(keypoints.shape[0], -1, 3)
-                # Need to return just (x, y).
-                keypoints = keypoints[..., :2]
+            num_keypoints = keypoints.shape[0]
+            if num_keypoints:
+                keypoints = keypoints.view(num_keypoints, -1, 3)
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
-        target = {}
-        target["boxes"] = boxes[keep]
-        target["labels"] = classes[keep]
-        target["masks"] = masks[keep]
-        target["image_id"] = image_id
-
+        boxes = boxes[keep]
+        classes = classes[keep]
+        masks = masks[keep]
         if keypoints is not None:
-            target["keypoints"] = keypoints[keep]
+            keypoints = keypoints[keep]
+
+        target = {}
+        target["boxes"] = boxes
+        target["labels"] = classes
+        target["masks"] = masks
+        target["image_id"] = image_id
+        if keypoints is not None:
+            target["keypoints"] = keypoints
 
         # for conversion to coco api
         area = torch.tensor([obj["area"] for obj in anno])
@@ -129,19 +130,15 @@ def convert_to_coco_api(ds):
     for img_idx in range(len(ds)):
         # find better way to get target
         # targets = ds.get_annotations(img_idx)
-        # img, targets = ds[img_idx]
-
-        img, targets = ds.load_item(img_idx)
-        width, height = img.size
-
-        image_id = targets["image_id"].item()
+        img, targets = ds[img_idx]
+        image_id = targets["image_id"]
         img_dict = {}
         img_dict["id"] = image_id
-        img_dict["width"] = width
-        img_dict["height"] = height
+        img_dict["height"] = img.shape[-2]
+        img_dict["width"] = img.shape[-1]
         dataset["images"].append(img_dict)
         bboxes = targets["boxes"].clone()
-        bboxes[:, 2:] -= bboxes[:, :2]  # XYXY -> XYWH
+        bboxes[:, 2:] -= bboxes[:, :2]
         bboxes = bboxes.tolist()
         labels = targets["labels"].tolist()
         areas = targets["area"].tolist()

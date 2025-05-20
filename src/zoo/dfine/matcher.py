@@ -15,8 +15,9 @@ import torchvision.transforms.v2.functional as TF
 
 from scipy.optimize import linear_sum_assignment
 from torch import Tensor
-from ...core import register
 from .box_ops import generalized_box_iou
+from ...core import register
+from ...misc.wrapper import unwrap
 
 
 @register()
@@ -78,9 +79,6 @@ class HungarianMatcher(nn.Module):
         """
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
-        # Compute number of target boxes per sample
-        sizes = [len(v["boxes"]) for v in targets]
-
         # We flatten to compute the cost matrices in a batch
         if self.use_focal_loss:
             out_prob = F.sigmoid(outputs["pred_logits"].flatten(0, 1))
@@ -89,23 +87,13 @@ class HungarianMatcher(nn.Module):
                 outputs["pred_logits"].flatten(0, 1).softmax(-1)
             )  # [batch_size * num_queries, num_classes]
 
-        out_bbox = torch.cat(
-            [
-                TF.convert_bounding_box_format(b, new_format="XYXY")
-                for b in outputs["pred_boxes"]
-            ],
-            dim=0
-        )  # [batch_size * num_queries, 4]
+        out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
 
         # Also concat the target labels and boxes
         tgt_ids = torch.cat([v["labels"] for v in targets])
-        tgt_bbox = torch.cat(
-            [
-                TF.convert_bounding_box_format(t["boxes"], new_format="XYXY") 
-                for t in targets
-            ],
-            dim=0
-        )
+        # Concatenate all target boxes into a single [sum(num_boxes), 4] tensor
+        tgt_bbox = torch.cat([v["boxes"] for v in targets], dim=0)
+        tgt_bbox = tgt_bbox.flatten(0, 1)
 
         # Compute the classification cost. Contrary to the loss, we don't use the NLL,
         # but approximate it in 1 - proba[target class].
@@ -128,12 +116,8 @@ class HungarianMatcher(nn.Module):
         # Compute the giou cost betwen boxes
         cost_giou = -generalized_box_iou(out_bbox, tgt_bbox)
 
-        # Base cost matrix: always computed
-        C = (
-            self.cost_bbox * cost_bbox
-            + self.cost_class * cost_class
-            + self.cost_giou * cost_giou
-        )
+        # Final cost matrix 3 * self.cost_bbox + 2 * self.cost_class + self.cost_giou
+        C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
 
         # Compute keypoint cost
         if "pred_keypoints" in outputs: 
@@ -142,9 +126,11 @@ class HungarianMatcher(nn.Module):
             cost_keypoints = self.keypoint_l1_distance(out_kpts, tgt_kpts)
             C = C + self.cost_keypoint * cost_keypoints
 
-        C = torch.nan_to_num(C, nan=1.0).view(bs, num_queries, -1)
-        # Restrict matching to each sample's own targets
-        indices_pre = [linear_sum_assignment(c[:, :sz].cpu()) for c, sz in zip(C, sizes)]
+        C = C.view(bs, num_queries, -1).cpu()
+        C = torch.nan_to_num(C, nan=1.0)
+        sizes = [len(v["boxes"]) for v in targets]
+
+        indices_pre = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
         indices = [
             (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
             for i, j in indices_pre

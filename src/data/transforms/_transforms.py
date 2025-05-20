@@ -19,6 +19,7 @@ from torchvision.tv_tensors import wrap, BoundingBoxes, Image, KeyPoints, Mask, 
 torchvision.disable_beta_transforms_warning()
 
 
+ClampBoundingBoxes = register()(T.ClampBoundingBoxes)
 ColorJitter = register()(T.ColorJitter)
 ConvertBoundingBoxFormat = register()(T.ConvertBoundingBoxFormat)
 GaussianBlur = register()(T.GaussianBlur)
@@ -57,31 +58,43 @@ class Letterboxed(T.Transform):
         KeyPoints,
     )
 
-    def __init__(self, size, fill=0, padding_mode="constant"):
+    def __init__(self, canvas_size, fill=0, padding_mode="constant"):
         super().__init__()
-        if isinstance(size, int):
-            size = (size, size)
-        self.size = size
+        self.canvas_size = torch.tensor(canvas_size)
         self.fill = fill
         self.padding_mode = padding_mode
-
+    
     def make_params(self, inpt: Any) -> Dict[str, Any]:
         inpt = inpt if len(inpt) > 1 else inpt[0]
-        h, w = F.get_size(inpt[0])
-        target_w, target_h = self.size
-        scale = min(target_h / h, target_w / w)
-        new_h, new_w = int(h * scale), int(w * scale)
-        pad_h, pad_w = target_h - new_h, target_w - new_w
-        pad_top, pad_bottom = pad_h // 2, pad_h - pad_h // 2
-        pad_left, pad_right = pad_w // 2, pad_w - pad_w // 2
+        input_h, input_w = F.get_size(inpt[0])
+        canvas_h, canvas_w = self.canvas_size
+        scale = min(canvas_h / input_h, canvas_w / input_w)
+        content_h, content_w = int(input_h * scale), int(input_w * scale)
+        pad_h, pad_w = canvas_h - content_h, canvas_w - content_w
+        padding = (
+            pad_w // 2,          # left
+            pad_h // 2,          # top
+            pad_w - pad_w // 2 , # right
+            pad_h - pad_h // 2,  # bottom
+        )
         return {
-            "new_size": (new_h, new_w),
-            "padding": (pad_left, pad_top, pad_right, pad_bottom),
+            "content_size": (content_h, content_w),
+            "padding": padding,
         }
 
-    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:             
-        resized = F.resize(inpt, params["new_size"])
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        content_size = params["content_size"]
+
+        # Resize
+        resized = F.resize(inpt, content_size)
+
+        if isinstance(inpt, BoundingBoxes):
+            # Clamp boxes to content area.
+            resized = F.clamp_bounding_boxes(resized)
+
+        # Pad
         padded = F.pad(resized, padding=params["padding"], fill=self.fill, padding_mode=self.padding_mode)
+        print(f"type: {type(inpt).__name__},\tinput: {F.get_size(inpt)}, resized: {F.get_size(resized)}, padded: {F.get_size(padded)}")
         return padded
 
 

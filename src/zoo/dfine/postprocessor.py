@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-from torchvision.tv_tensors import BoundingBoxes, KeyPoints
+from torchvision.tv_tensors import wrap
 
 from torchvision.transforms.v2.functional import convert_bounding_box_format
 from ...core import register
@@ -37,10 +37,13 @@ class DFINEPostProcessor(nn.Module):
     def extra_repr(self) -> str:
         return f"use_focal_loss={self.use_focal_loss}, num_classes={self.num_classes}, num_top_queries={self.num_top_queries}"
 
-    def forward(self, outputs):
-        boxes_list = outputs["pred_boxes"]
-        keypoints_list = outputs["pred_keypoints"]
+    def forward(self, outputs):        
         logits = outputs["pred_logits"]
+        
+        boxes = outputs["pred_boxes"]
+        boxes = [convert_bounding_box_format(b, new_format="XYXY") for b in boxes]
+
+        keypoints = outputs.get("pred_keypoints", [])
 
         if self.use_focal_loss:
             scores = F.sigmoid(logits)
@@ -49,14 +52,15 @@ class DFINEPostProcessor(nn.Module):
             # labels = index % self.num_classes
             labels = mod(index, self.num_classes)
             index = index // self.num_classes
-            # Select top queries per sample, then index each TVTensor
+            # Select top query boxes per sample, preserving BoundingBoxes type.
             boxes = [
-                BoundingBoxes(b.data[idx], format=b.format, canvas_size=b.canvas_size)
-                for b, idx in zip(boxes_list, index)
+                wrap(sample_boxes[idx], like=sample_boxes)
+                for sample_boxes, idx in zip(boxes, index)
             ]
+            # Select top query boxes per sample, preserving KeyPoints type.
             keypoints = [
-                KeyPoints(kpts.data[idx], canvas_size=kpts.canvas_size)
-                for kpts, idx in zip(keypoints_list, index)
+                wrap(sample_keypoints[idx], like=sample_keypoints)
+                for sample_keypoints, idx in zip(keypoints, index)
             ]
         else:
             scores = F.softmax(logits)[:, :, :-1]
@@ -64,13 +68,15 @@ class DFINEPostProcessor(nn.Module):
             if scores.shape[1] > self.num_top_queries:
                 scores, index = torch.topk(scores, self.num_top_queries, dim=-1)
                 labels = torch.gather(labels, dim=1, index=index)
+                # Select top query boxes per sample, preserving BoundingBoxes type.
                 boxes = [
-                    BoundingBoxes(b.data[idx], format=b.format, canvas_size=b.canvas_size)
-                    for b, idx in zip(boxes_list, index)
+                    wrap(sample_boxes[idx], like=sample_boxes)
+                    for sample_boxes, idx in zip(boxes, index)
                 ]
+                # Select top query boxes per sample, preserving KeyPoints type.
                 keypoints = [
-                    KeyPoints(kpts.data[idx], canvas_size=kpts.canvas_size)
-                    for kpts, idx in zip(keypoints_list, index)
+                    wrap(sample_keypoints[idx], like=sample_keypoints)
+                    for sample_keypoints, idx in zip(keypoints, index)
                 ]
 
         # TODO for onnx export
@@ -78,9 +84,9 @@ class DFINEPostProcessor(nn.Module):
             return labels, boxes, scores, keypoints
 
         # TODO
-        if self.remap_mscoco_category:
+        if self.remap_mscoco_category and len(boxes) > 0:
             from ...data.dataset import mscoco_label2category
-
+    
             labels = (
                 torch.tensor([mscoco_label2category[int(x.item())] for x in labels.flatten()])
                 .to(boxes[0].device)

@@ -5,7 +5,6 @@ import torch.nn as nn
 from datetime import datetime
 from pathlib import Path
 from typing import Dict
-from .tv_tensor_wrapper import wrap_outputs
 from ..core import BaseConfig
 from ..misc import dist_utils
 
@@ -132,9 +131,6 @@ class BaseSolver(object):
             sync_bn=cfg.sync_bn,
             find_unused_parameters=cfg.find_unused_parameters,
         )
-
-        # Wrap the model so that outputs are tv-tensors.
-        self.model = wrap_outputs(self.model)
 
         self.criterion = self.to(cfg.criterion, device)
         self.postprocessor = self.to(cfg.postprocessor, device)

@@ -120,10 +120,14 @@ class DetSolver(BaseSolver):
 
             # Update best stats
             current_stats = {
-                "epoch": epoch,
-                "coco_eval_bbox": test_stats["coco_eval_bbox"][0],
-                "coco_eval_keypoints": test_stats["coco_eval_keypoints"][0] if "coco_eval_keypoints" in test_stats else 0,
+                "epoch": epoch
             }
+
+            if "coco_eval_bbox" in test_stats:
+                current_stats["coco_eval_bbox"] = test_stats["coco_eval_bbox"][0]
+
+            if "coco_eval_keypoints" in test_stats:
+                current_stats["coco_eval_keypoints"] = test_stats["coco_eval_keypoints"][0]
 
             best_stat_tracker.update(current_stats)
 

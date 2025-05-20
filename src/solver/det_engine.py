@@ -22,6 +22,7 @@ from ..data import CocoEvaluator
 from ..data.dataset import mscoco_category2label
 from ..misc import MetricLogger, SmoothedValue, dist_utils, save_samples
 from ..optim import ModelEMA, Warmup
+from ..misc.wrapper import wrap
 from .validator import Validator
 
 
@@ -69,10 +70,24 @@ def train_one_epoch(
 
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
+        targets = wrap(
+            targets,
+            old_canvas_size=(1,1),
+            old_box_format="XYWH",
+            new_canvas_size=F.get_size(samples),
+            new_box_format= "CXCYWH"
+        )
 
         if scaler is not None:
             with torch.autocast(device_type=str(device), cache_enabled=True):
                 outputs = model(samples, targets=targets)
+                outputs = wrap(
+                    outputs,
+                    old_canvas_size=(1,1),
+                    old_box_format="XYWH",
+                    new_canvas_size=F.get_size(samples),
+                    new_box_format= "CXCYWH"
+                )
 
             if any(torch.isnan(b.data).any() or torch.isinf(b.data).any() for b in outputs["pred_boxes"]):
                 state = model.state_dict()
@@ -101,6 +116,13 @@ def train_one_epoch(
 
         else:
             outputs = model(samples, targets=targets)
+            outputs = wrap(
+                outputs,
+                old_canvas_size=(1,1),
+                old_box_format="XYWH",
+                new_canvas_size=F.get_size(samples),
+                new_box_format= "CXCYWH"
+            )
             loss_dict = criterion(outputs, targets, **metas)
 
             loss: torch.Tensor = sum(loss_dict.values())
@@ -186,14 +208,27 @@ def evaluate(
 
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
+        targets = wrap(
+            targets,
+            old_canvas_size=(1,1),
+            old_box_format="XYWH",
+            new_canvas_size=F.get_size(samples),
+            new_box_format= "CXCYWH"
+        )
 
         outputs = model(samples)
+        outputs = wrap(
+            outputs,
+            old_canvas_size=(1,1),
+            old_box_format="XYWH",
+            new_canvas_size=F.get_size(samples),
+            new_box_format="CXCYWH"
+        )
         # with torch.autocast(device_type=str(device)):
         #     outputs = model(samples)
 
         # TODO (lyuwenyu), fix dataset converted using `convert_to_coco_api`?
         results = postprocessor(outputs)
-        denormalize_results(samples, targets, results)
 
         if i < 20:
             render_results(samples, targets, results)
@@ -202,23 +237,50 @@ def evaluate(
         #     results = postprocessor['segm'](results, outputs, orig_target_sizes, target_sizes)
         
         if coco_evaluator is not None:
-            coco_result = {target["image_id"].item(): output for target, output in zip(targets, results)}
-            coco_evaluator.update(coco_result)
+            coco_results = {target["image_id"].item(): output for target, output in zip(targets, results)}
+            coco_evaluator.update(coco_results)
 
-        gt_i, preds_i = format_metrics(targets, results, postprocessor.remap_mscoco_category)
-        gt.extend(gt_i)
-        preds.extend(preds_i)
+        # validator format for metrics
+        for target, result in zip(targets, results):
+            # Ground Truth
+            gt_item = {
+                "boxes": target["boxes"],
+                "labels": target["labels"],
+            }
+
+            if "keypoints" in target:
+                gt_item["keypoints"] = target["keypoints"]
+
+            gt.append(gt_item)
+
+            # Predictions
+            pred_labels = (
+                torch.tensor([mscoco_category2label[int(x.item())] for x in result["labels"].flatten()])
+                .to(result["labels"].device)
+                .reshape(result["labels"].shape)
+            ) if postprocessor.remap_mscoco_category else result["labels"]
+
+            pred_item = {
+                "boxes": result["boxes"],
+                "labels": pred_labels,
+                "scores": result["scores"]
+            }
+
+            if "keypoints" in result:
+                pred_item["keypoints"] = result["keypoints"]
+
+            preds.append(pred_item)
+
 
     # Conf matrix, F1, Precision, Recall, box IoU
-    # metrics = Validator(gt, preds).compute_metrics(extended=True)
-    # print("Metrics:")
-    # for k, v in sorted(metrics.items()):
-    #     print(f"  {k:30}: {v:.4f}" if isinstance(v, float) else f"  {k:30}: {v}")
+    metrics = Validator(gt, preds).compute_metrics(extended=True)
+    #print_metrics("Metrics:")
+    print("Metrics:", metrics)
 
-    # if use_wandb:
-    #     metrics = {f"metrics/{k}": v for k, v in metrics.items()}
-    #     metrics["epoch"] = epoch
-    #     wandb.log(metrics)
+    if use_wandb:
+        metrics = {f"metrics/{k}": v for k, v in metrics.items()}
+        metrics["epoch"] = epoch
+        wandb.log(metrics)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -238,17 +300,7 @@ def evaluate(
             stats["coco_eval_keypoints"] = coco_evaluator.coco_eval["keypoints"].stats.tolist()
 
     return stats, coco_evaluator
-
-
-def denormalize_results(samples, targets, results):
-    for result in results:
-        size = F.get_image_size(samples)
-
-        result["boxes"] = F.resize(result["boxes"], size)
-
-        if "keypoints" in result:
-            result["keypoints"] = F.resize(result["keypoints"], size)
-
+    
 
 def render_results(samples, targets, results):
     import torch
@@ -258,7 +310,6 @@ def render_results(samples, targets, results):
     try:
         pred_dir = Path("/workspace/training/output/predictions")
         pred_dir.mkdir(parents=True, exist_ok=True)
-
 
         # Loop over each image in the batch
         for idx in range(samples.size(0)):
@@ -279,54 +330,28 @@ def render_results(samples, targets, results):
             pred = results[idx]
             pred_boxes = F.convert_bounding_box_format(pred["boxes"], new_format="XYXY")
             pred_scores = pred.get("scores", torch.zeros(pred_boxes.size(0)))
-            pred_labels = [
-                f"{int(l.item())}:{s:.2f}" for l, s in zip(pred["labels"].flatten(), pred_scores.flatten())
-            ]
-            img_overlay = draw_bounding_boxes(img_overlay, pred_boxes, labels=pred_labels, colors="#00FFFF", width=2)
-            # Now draw ground-truth keypoints on top of boxes
+            keep_mask = pred_scores > 0.2
+            pred_boxes = pred_boxes[keep_mask]
+            pred_scores = pred_scores[keep_mask]
+            # Filter labels and keypoints accordingly
+            pred_labels = [f"{int(l.item())}:{s:.2f}"
+                           for l, s, keep in zip(pred["labels"].flatten(), pred_scores, keep_mask.tolist())
+                           if keep]
+            img_overlay = draw_bounding_boxes(
+                img_overlay, pred_boxes, labels=pred_labels, colors="#00FFFF", width=2
+            )
+            
+            if "keypoints" in pred:
+                # Filter keypoints to match kept boxes
+                pred_kpts = pred["keypoints"][keep_mask]
+                img_overlay = draw_keypoints(img_overlay, pred_kpts, colors="#FFFF00", radius=3)
+
+            # Draw ground-truth keypoints on top of boxes
             if "keypoints" in gt:
                 img_overlay = draw_keypoints(img_overlay, gt["keypoints"], colors="#00FF00", radius=3)
-            # Then draw predicted keypoints in bright yellow
-            if "keypoints" in pred:
-                img_overlay = draw_keypoints(img_overlay, pred["keypoints"], colors="#FFFF00", radius=3)
 
             # Save annotated image to disk
-            save_image(img_overlay.float() / 255.0, pred_dir / f"render_{idx}.png")
+            image_id = targets[idx]["image_id"][0]
+            save_image(img_overlay.float() / 255.0, pred_dir / f"{image_id}_pred.png")
     except Exception as e:
         print(f"render_results error: {e}")
-
-def format_metrics(targets, results, remap_mscoco_category):
-    gt: List[Dict[str, torch.Tensor]] = []
-    preds: List[Dict[str, torch.Tensor]] = []
-
-    for idx, (target, result) in enumerate(zip(targets, results)):
-        # Targets
-        gt_i = {
-            "boxes": target["boxes"],
-            "labels": target["labels"],
-        }
-
-        if "keypoints" in target:
-            gt_i["keypoints"] = target["keypoints"]
-
-        gt.append(gt_i)
-
-        # Predictions
-        pred_labels = (
-            torch.tensor([mscoco_category2label[int(x.item())] for x in result["labels"].flatten()])
-            .to(result["labels"].device)
-            .reshape(result["labels"].shape)
-        ) if remap_mscoco_category else result["labels"]
-
-        pred_i = {
-            "boxes": result["boxes"], 
-            "labels": pred_labels, 
-            "scores": result["scores"]
-        }
-
-        if "keypoints" in result:
-            pred_i["keypoints"] = result["keypoints"]
-
-        preds.append(pred_i)
-
-    return gt, preds

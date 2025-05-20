@@ -18,6 +18,7 @@ from torchvision.transforms.v2.functional import convert_bounding_box_format
 from ...core import register
 from ...data.dataset.coco_dataset import category_keypoint_layouts, mscoco_label2category
 from ...misc.dist_utils import get_world_size, is_dist_available_and_initialized
+from ...misc.wrapper import unwrap
 from .box_ops import box_iou, generalized_box_iou
 from .dfine_utils import bbox2distance
 
@@ -89,20 +90,9 @@ class DFINECriterion(nn.Module):
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         if values is None:
-            src_boxes = torch.stack([
-                convert_bounding_box_format(b, new_format="XYXY") 
-                for b in outputs["pred_boxes"]
-            ])
-            src_boxes = src_boxes[idx]
-
-            target_boxes = torch.cat(
-                [
-                    convert_bounding_box_format(t["boxes"], new_format="XYXY")[i]
-                    for t, (_, i) in zip(targets, indices)
-                ], 
-                dim=0
-            )
-
+            src_boxes = outputs["pred_boxes"][idx]
+            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            target_boxes = target_boxes.flatten(0, 1)
             ious, _ = box_iou(src_boxes, target_boxes)
             ious = torch.diag(ious).detach()
         else:
@@ -136,25 +126,17 @@ class DFINECriterion(nn.Module):
         """
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
-        src_boxes = torch.stack([
-            convert_bounding_box_format(b, new_format="XYXY") 
-            for b in outputs["pred_boxes"]
-        ])
-        src_boxes = src_boxes[idx]
-
-        target_boxes = torch.cat(
-            [
-                convert_bounding_box_format(t["boxes"], new_format="XYXY")[i]
-                for t, (_, i) in zip(targets, indices)
-            ], 
-            dim=0
-        )
+        src_boxes = outputs["pred_boxes"][idx]
+        target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_boxes = target_boxes.flatten(0, 1)
 
         losses = {}
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
         losses["loss_bbox"] = loss_bbox.sum() / num_boxes
 
-        loss_giou = 1 - torch.diag(generalized_box_iou(src_boxes, target_boxes))
+        loss_giou = 1 - torch.diag(
+            generalized_box_iou(src_boxes, target_boxes)
+        )
         loss_giou = loss_giou if boxes_weight is None else loss_giou * boxes_weight
         losses["loss_giou"] = loss_giou.sum() / num_boxes
 
@@ -168,23 +150,12 @@ class DFINECriterion(nn.Module):
         losses = {}
         if "pred_corners" in outputs:
             idx = self._get_src_permutation_idx(indices)
-
-            src_boxes = torch.stack([
-                convert_bounding_box_format(b, new_format="XYXY") 
-                for b in outputs["pred_boxes"]
-            ])
-            src_boxes = src_boxes[idx]
-
-            target_boxes = torch.cat(
-                [
-                    convert_bounding_box_format(t["boxes"], new_format="XYXY")[i]
-                    for t, (_, i) in zip(targets, indices)
-                ], 
-                dim=0
-            )
-
+            src_boxes = outputs["pred_boxes"][idx]
+            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            target_boxes = target_boxes.flatten(0, 1)
             pred_corners = outputs["pred_corners"][idx].reshape(-1, (self.reg_max + 1))
             ref_points = outputs["ref_points"][idx].detach()
+
             with torch.no_grad():
                 if self.fgl_targets_dn is None and "is_dn" in outputs:
                     self.fgl_targets_dn = bbox2distance(
@@ -207,7 +178,9 @@ class DFINECriterion(nn.Module):
                 self.fgl_targets_dn if "is_dn" in outputs else self.fgl_targets
             )
 
-            ious = torch.diag(box_iou(src_boxes, target_boxes)[0])
+            ious = torch.diag(
+                box_iou(src_boxes, target_boxes)[0]
+            )
             weight_targets = ious.unsqueeze(-1).repeat(1, 1, 4).reshape(-1).detach()
 
             losses["loss_fgl"] = self.unimodal_distribution_focal_loss(
@@ -250,7 +223,7 @@ class DFINECriterion(nn.Module):
                     )
                     if "is_dn" not in outputs:
                         batch_scale = (
-                            8 / len(outputs["pred_boxes"])
+                            8 / outputs["pred_boxes"].shape[0]
                         )  # Avoid the influence of batch size per GPU
                         self.num_pos, self.num_neg = (
                             (mask.sum() * batch_scale) ** 0.5,
@@ -269,14 +242,9 @@ class DFINECriterion(nn.Module):
         assert "pred_keypoints" in outputs, "No pred_keypoints in outputs"
 
         idx = self._get_src_permutation_idx(indices)
-        src_keypoints = torch.stack(outputs["pred_keypoints"])
-        src_keypoints = src_keypoints[idx]
-
-        target_keypoints = torch.cat(
-            [t["keypoints"][i] if "keypoints" in t else torch.empty() 
-             for t, (_, i) in zip(targets, indices)],
-            dim=0
-        )
+        src_keypoints = outputs["pred_keypoints"][idx]
+        target_keypoints = torch.cat([t["keypoints"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_keypoints = target_keypoints.flatten(0, 1)
 
         labels = torch.cat([t["labels"][i] for t, (_, i) in zip(targets, indices)], dim=0)
         loss = 0.0
@@ -362,6 +330,9 @@ class DFINECriterion(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
+        # Loss methods work with raw tensors; ditch the TVTensor types.
+        outputs = unwrap(outputs, new_box_format="XYXY")
+        targets = unwrap(targets, new_box_format="XYXY")
         outputs_without_aux = {k: v for k, v in outputs.items() if "aux" not in k}
 
         # Retrieve the matching between the outputs of the last layer and the targets
@@ -517,25 +488,17 @@ class DFINECriterion(nn.Module):
             return {}
 
         idx = self._get_src_permutation_idx(indices)
-        src_boxes = torch.stack([
-            convert_bounding_box_format(b, new_format="XYXY") 
-            for b in outputs["pred_boxes"]
-        ])
-        src_boxes = src_boxes[idx]
-
-        target_boxes = torch.cat(
-            [
-                convert_bounding_box_format(t["boxes"], new_format="XYXY")[i]
-                for t, (_, i) in zip(targets, indices)
-            ], 
-            dim=0
-        )
+        src_boxes = outputs["pred_boxes"][idx]
+        target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_boxes = target_boxes.flatten(0, 1)
 
         if self.boxes_weight_format == "iou":
             iou, _ = box_iou(src_boxes, target_boxes)
             iou = torch.diag(iou)
         elif self.boxes_weight_format == "giou":
-            iou = torch.diag(generalized_box_iou(src_boxes, target_boxes))
+            iou = torch.diag(
+                generalized_box_iou(src_boxes, target_boxes)
+            )
         else:
             raise AttributeError()
 
