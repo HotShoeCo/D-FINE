@@ -40,7 +40,6 @@ class EmptyTransform(T.Transform):
         return {}
 
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        print("EMPYT")
         return inpt
 
 
