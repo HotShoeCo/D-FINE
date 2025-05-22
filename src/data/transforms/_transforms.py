@@ -121,7 +121,6 @@ class Letterbox(T.Transform):
 
         # Pad
         padded = F.pad(resized, padding=params["padding"], fill=self.fill, padding_mode=self.padding_mode)
-        print(f"type: {type(inpt).__name__},\tinput: {F.get_size(inpt)}, resized: {F.get_size(resized)}, padded: {F.get_size(padded)}")
         return padded
 
 
