@@ -163,7 +163,4 @@ class NormalizeAnnotations(T.Transform):
             norm_tensor = coords / divisor
             return wrap(norm_tensor, like=inpt)
         
-        if isinstance(inpt, Mask):
-            print("hi")
-        
         return inpt
