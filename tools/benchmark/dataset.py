@@ -9,8 +9,8 @@ import os
 import torch
 import torch.utils.data as data
 import torchvision
-import torchvision.transforms as T
-import torchvision.transforms.functional as F
+import torchvision.transforms.v2 as T
+import torchvision.transforms.functional.v2 as F
 from PIL import Image
 
 Image.MAX_IMAGE_PIXELS = None

@@ -10,11 +10,12 @@ import faster_coco_eval.core.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
+import torchvision.transforms.v2.functional as F
 import os
-from PIL import Image
 
+from PIL import Image
+from torchvision.tv_tensors import BoundingBoxes, Mask
 from ...core import register
-from .._misc import convert_to_tv_tensor
 from ._dataset import DetDataset
 
 torchvision.disable_beta_transforms_warning()
@@ -60,14 +61,13 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
             image, target = self.prepare(image, target)
 
         target["idx"] = torch.tensor([idx])
+        canvas_size = F.get_size(image)
 
         if "boxes" in target:
-            target["boxes"] = convert_to_tv_tensor(
-                target["boxes"], key="boxes", spatial_size=image.size[::-1]
-            )
+            target["boxes"] = BoundingBoxes(target["boxes"], format="XYWH", canvas_size=canvas_size)
 
         if "masks" in target:
-            target["masks"] = convert_to_tv_tensor(target["masks"], key="masks")
+            target["masks"] = Mask(target["masks"])
 
         return image, target
 

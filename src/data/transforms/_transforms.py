@@ -13,30 +13,20 @@ import torchvision
 import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
-from ...core import register
-from .._misc import (
-    BoundingBoxes,
-    Image,
-    Mask,
-    SanitizeBoundingBoxes,
-    Video,
-    _boxes_keys,
-    convert_to_tv_tensor,
-)
+from torchvision.tv_tensors import wrap, BoundingBoxes, Image, KeyPoints, Mask, Video
+from ...core import register, create
+
 
 torchvision.disable_beta_transforms_warning()
 
-
+ConvertBoundingBoxFormat = register()(T.ConvertBoundingBoxFormat)
+RandomCrop = register()(T.RandomCrop)
+RandomHorizontalFlip = register()(T.RandomHorizontalFlip)
+RandomIoUCrop = register()(T.RandomIoUCrop)
 RandomPhotometricDistort = register()(T.RandomPhotometricDistort)
 RandomZoomOut = register()(T.RandomZoomOut)
-RandomHorizontalFlip = register()(T.RandomHorizontalFlip)
 Resize = register()(T.Resize)
-# ToImageTensor = register()(T.ToImageTensor)
-# ConvertDtype = register()(T.ConvertDtype)
-# PILToTensor = register()(T.PILToTensor)
-SanitizeBoundingBoxes = register(name="SanitizeBoundingBoxes")(SanitizeBoundingBoxes)
-RandomCrop = register()(T.RandomCrop)
-Normalize = register()(T.Normalize)
+SanitizeBoundingBoxes = register()(T.SanitizeBoundingBoxes)
 
 
 @register()
@@ -46,94 +36,95 @@ class EmptyTransform(T.Transform):
     ) -> None:
         super().__init__()
 
-    def forward(self, *inputs):
-        inputs = inputs if len(inputs) > 1 else inputs[0]
-        return inputs
+    def make_params(self, *inputs):
+        return {}
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        print("EMPYT")
+        return inpt
 
 
 @register()
-class PadToSize(T.Pad):
+class RandomApply(T.RandomApply):
+    """
+    A thin wrapper around T.RandomApply to accomodate the yaml config parser instantiating nested transform objects.
+    """
+
+    def __init__(self, transforms: list, p: float = 1.0) -> None:
+        # Build the inner transforms; this is what wasn't working when trying to use T.RandomApply straight from the config.
+        instances = []
+        for t in transforms:
+            kwargs = t.copy()
+            t_type = kwargs.pop("type")
+            inner_transform = create(t_type, **kwargs)
+            instances.append(inner_transform)
+        
+        super().__init__(torch.nn.ModuleList(instances), p=p)
+
+
+@register()
+class Letterbox(T.Transform):
+    """
+    Letterbox transform that resizes the input to fit within a canvas of the specified size
+    while preserving aspect ratio. The resized content is centered on the canvas, and the
+    remaining area is padded with the given fill value and padding mode.
+    
+    Args:
+        canvas_size (tuple[int, int]): The (height, width) of the output canvas.
+        fill (int or tuple[int]): Padding fill value for image/video/mask axes.
+        padding_mode (str): Padding mode passed to F.pad (e.g., "constant", "edge").
+
+    Returns:
+        The transformed input, matching the original type (e.g., PIL.Image, tv.Tensor).
+    """
     _transformed_types = (
         PIL.Image.Image,
         Image,
         Video,
         Mask,
         BoundingBoxes,
+        KeyPoints,
     )
 
-    def _get_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
-        sp = F.get_spatial_size(flat_inputs[0])
-        h, w = self.size[1] - sp[0], self.size[0] - sp[1]
-        self.padding = [0, 0, w, h]
-        return dict(padding=self.padding)
-
-    def __init__(self, size, fill=0, padding_mode="constant") -> None:
-        if isinstance(size, int):
-            size = (size, size)
-        self.size = size
-        super().__init__(0, fill, padding_mode)
-
-    def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        fill = self._fill[type(inpt)]
-        padding = params["padding"]
-        return F.pad(inpt, padding=padding, fill=fill, padding_mode=self.padding_mode)  # type: ignore[arg-type]
-
-    def __call__(self, *inputs: Any) -> Any:
-        outputs = super().forward(*inputs)
-        if len(outputs) > 1 and isinstance(outputs[1], dict):
-            outputs[1]["padding"] = torch.tensor(self.padding)
-        return outputs
-
-
-@register()
-class RandomIoUCrop(T.RandomIoUCrop):
-    def __init__(
-        self,
-        min_scale: float = 0.3,
-        max_scale: float = 1,
-        min_aspect_ratio: float = 0.5,
-        max_aspect_ratio: float = 2,
-        sampler_options: Optional[List[float]] = None,
-        trials: int = 40,
-        p: float = 1.0,
-    ):
-        super().__init__(
-            min_scale, max_scale, min_aspect_ratio, max_aspect_ratio, sampler_options, trials
-        )
-        self.p = p
-
-    def __call__(self, *inputs: Any) -> Any:
-        if torch.rand(1) >= self.p:
-            return inputs if len(inputs) > 1 else inputs[0]
-
-        return super().forward(*inputs)
-
-
-@register()
-class ConvertBoxes(T.Transform):
-    _transformed_types = (BoundingBoxes,)
-
-    def __init__(self, fmt="", normalize=False) -> None:
+    def __init__(self, canvas_size, fill=0, padding_mode="constant"):
         super().__init__()
-        self.fmt = fmt
-        self.normalize = normalize
+        self.canvas_size = torch.tensor(canvas_size)
+        self.fill = fill
+        self.padding_mode = padding_mode
+
+    def make_params(self, inpt: Any) -> Dict[str, Any]:
+        inpt = inpt if len(inpt) > 1 else inpt[0]
+        input_h, input_w = F.get_size(inpt[0])
+        canvas_h, canvas_w = self.canvas_size
+        scale = min(canvas_h / input_h, canvas_w / input_w)
+        content_h, content_w = int(input_h * scale), int(input_w * scale)
+        pad_h, pad_w = canvas_h - content_h, canvas_w - content_w
+        padding = (
+            pad_w // 2,          # left
+            pad_h // 2,          # top
+            pad_w - pad_w // 2 , # right
+            pad_h - pad_h // 2,  # bottom
+        )
+        return {
+            "content_size": (content_h, content_w),
+            "padding": padding,
+        }
 
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        return self._transform(inpt, params)
+        content_size = params["content_size"]
 
-    def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        spatial_size = getattr(inpt, _boxes_keys[1])
-        if self.fmt:
-            in_fmt = inpt.format.value.lower()
-            inpt = torchvision.ops.box_convert(inpt, in_fmt=in_fmt, out_fmt=self.fmt.lower())
-            inpt = convert_to_tv_tensor(
-                inpt, key="boxes", box_format=self.fmt.upper(), spatial_size=spatial_size
-            )
+        # Resize
+        resized = F.resize(inpt, content_size)
 
-        if self.normalize:
-            inpt = inpt / torch.tensor(spatial_size[::-1]).tile(2)[None]
+        if isinstance(inpt, BoundingBoxes):
+            # Clamp boxes to content area.
+            resized = F.clamp_bounding_boxes(resized)
 
-        return inpt
+        # Pad
+        padded = F.pad(resized, padding=params["padding"], fill=self.fill, padding_mode=self.padding_mode)
+        print(f"type: {type(inpt).__name__},\tinput: {F.get_size(inpt)}, resized: {F.get_size(resized)}, padded: {F.get_size(padded)}")
+        return padded
+
 
 
 @register()
@@ -145,17 +136,34 @@ class ConvertPILImage(T.Transform):
         self.dtype = dtype
         self.scale = scale
 
+    def make_params(self, *inputs):
+        return {}
+
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        return self._transform(inpt, params)
-
-    def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        inpt = F.pil_to_tensor(inpt)
+        tensor = F.pil_to_tensor(inpt)
         if self.dtype == "float32":
-            inpt = inpt.float()
-
+            tensor = tensor.float()
         if self.scale:
-            inpt = inpt / 255.0
+            tensor = tensor / 255.0
+        return Image(tensor)
 
-        inpt = Image(inpt)
+@register()
+class NormalizeAnnotations(T.Transform):
+    """
+    Normalize annotation TV Tensors:
+    - BoundingBoxes: convert absolute pixel coordinates to relative [0,1].
+    """
+    _transformed_types = (BoundingBoxes, Mask)
 
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        if isinstance(inpt, BoundingBoxes):
+            H, W = F.get_size(inpt)
+            coords = inpt.data
+            divisor = torch.tensor([W, H, W, H], device=coords.device, dtype=torch.float32)
+            norm_tensor = coords / divisor
+            return wrap(norm_tensor, like=inpt)
+        
+        if isinstance(inpt, Mask):
+            print("hi")
+        
         return inpt

@@ -8,7 +8,6 @@ import faster_coco_eval.core.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
-import torchvision.transforms.functional as TVF
 from faster_coco_eval import COCO
 
 

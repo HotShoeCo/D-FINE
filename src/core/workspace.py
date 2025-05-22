@@ -169,10 +169,6 @@ def create(type_or_name, global_cfg=GLOBAL_CONFIG, **kwargs):
 
     # TODO hard code
     module_kwargs = {k: v for k, v in module_kwargs.items() if not k.startswith("_")}
-
-    # TODO for **kwargs
-    # extra_args = set(module_kwargs.keys()) - set(arg_names)
-    # if len(extra_args) > 0:
-    #     raise RuntimeError(f'Error: unknown args {extra_args} for {module}')
-
+    # allow extra kwargs passed to create to override or add
+    module_kwargs.update(kwargs)
     return module(**module_kwargs)

@@ -9,7 +9,7 @@ import cv2  # Added for video processing
 import numpy as np
 import torch
 import torch.nn as nn
-import torchvision.transforms as T
+import torchvision.transforms.v2 as T
 from PIL import Image, ImageDraw
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))

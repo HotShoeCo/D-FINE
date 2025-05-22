@@ -14,7 +14,7 @@ import fiftyone.core.labels as fol
 import fiftyone.core.models as fom
 import fiftyone.zoo as foz
 import torch
-import torchvision.transforms as transforms
+import torchvision.transforms.v2 as transforms
 import tqdm
 from fiftyone import ViewField as F
 from PIL import Image

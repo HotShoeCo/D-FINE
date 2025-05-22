@@ -4,11 +4,12 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
 from ._transforms import (
-    ConvertBoxes,
+    ConvertBoundingBoxFormat,
     ConvertPILImage,
     EmptyTransform,
-    Normalize,
-    PadToSize,
+    Letterbox,
+    NormalizeAnnotations,
+    RandomApply,
     RandomCrop,
     RandomHorizontalFlip,
     RandomIoUCrop,

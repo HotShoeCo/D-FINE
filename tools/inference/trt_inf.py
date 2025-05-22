@@ -12,7 +12,7 @@ import cv2  # Added for video processing
 import numpy as np
 import tensorrt as trt
 import torch
-import torchvision.transforms as T
+import torchvision.transforms.v2 as T
 from PIL import Image, ImageDraw
 
 

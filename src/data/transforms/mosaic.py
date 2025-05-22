@@ -12,7 +12,6 @@ import torchvision.transforms.v2.functional as F
 from PIL import Image
 
 from ...core import register
-from .._misc import convert_to_tv_tensor
 
 torchvision.disable_beta_transforms_warning()
 

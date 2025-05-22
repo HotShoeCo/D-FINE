@@ -185,7 +185,7 @@ def evaluate(
         global_step = epoch * len(data_loader) + i
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            save_samples(samples, targets, output_dir, "val", normalized=False, box_fmt="xyxy")
+            save_samples(samples, targets, output_dir, "val", normalized=False, box_fmt="cxcywh")
 
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]

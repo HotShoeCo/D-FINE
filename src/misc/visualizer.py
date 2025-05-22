@@ -19,7 +19,7 @@ def save_samples(samples: torch.Tensor, targets: List[Dict], output_dir: str, sp
     normalized: whether the boxes are normalized to [0, 1]
     box_fmt: 'xyxy', 'xywh', 'cxcywh', D-FINE uses 'cxcywh' for training, 'xyxy' for validation
     '''
-    from torchvision.transforms.functional import to_pil_image
+    from torchvision.transforms.v2.functional import to_pil_image
     from torchvision.ops import box_convert
     from pathlib import Path
     from PIL import ImageDraw, ImageFont

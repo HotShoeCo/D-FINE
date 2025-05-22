@@ -4,7 +4,7 @@ import torch
 
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
-import torchvision.transforms.functional as F
+import torchvision.transforms.v2.functional as F
 from packaging import version
 from torch import Tensor
 
