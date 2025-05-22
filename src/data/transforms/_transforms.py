@@ -147,19 +147,16 @@ class ConvertPILImage(T.Transform):
         return Image(tensor)
 
 @register()
-class NormalizeAnnotations(T.Transform):
+class NormalizeAnnotations(T.Resize):
     """
-    Normalize annotation TV Tensors:
-    - BoundingBoxes: convert absolute pixel coordinates to relative [0,1].
+    Normalize TV Tensors to the range [0, 1] relative to their current canvas_size.
+    Uses T.Resize to set the canvas size down to (1,1) and which will normalize any TVTensor type with supported transform kernels.
     """
+
     _transformed_types = (BoundingBoxes, Mask)
 
+    def __init__(self) -> None:
+        super().__init__(size=(1, 1))
+
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        if isinstance(inpt, BoundingBoxes):
-            H, W = F.get_size(inpt)
-            coords = inpt.data
-            divisor = torch.tensor([W, H, W, H], device=coords.device, dtype=torch.float32)
-            norm_tensor = coords / divisor
-            return wrap(norm_tensor, like=inpt)
-        
-        return inpt
+        return super().transform(inpt, params)
