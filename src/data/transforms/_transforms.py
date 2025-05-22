@@ -13,7 +13,7 @@ import torchvision
 import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
-from torchvision.tv_tensors import wrap, BoundingBoxes, Image, KeyPoints, Mask, Video
+from torchvision.tv_tensors import BoundingBoxes, Image, KeyPoints, Mask, Video
 from ...core import register, create
 
 

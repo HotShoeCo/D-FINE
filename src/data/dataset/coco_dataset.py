@@ -64,7 +64,8 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         canvas_size = F.get_size(image)
 
         if "boxes" in target:
-            target["boxes"] = BoundingBoxes(target["boxes"], format="XYWH", canvas_size=canvas_size)
+            # COCO annotations are in XYWH format, but self.prepare() converted them to XYXY.
+            target["boxes"] = BoundingBoxes(target["boxes"], format="XYXY", canvas_size=canvas_size)
 
         if "masks" in target:
             target["masks"] = Mask(target["masks"])

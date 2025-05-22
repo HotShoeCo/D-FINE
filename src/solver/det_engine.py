@@ -63,7 +63,7 @@ def train_one_epoch(
         metas = dict(epoch=epoch, step=i, global_step=global_step, epoch_step=len(data_loader))
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            save_samples(samples, targets, output_dir, "train", normalized=True, box_fmt="cxcywh")
+            save_samples(samples, targets, output_dir, "train", normalized=True)
 
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
@@ -185,7 +185,7 @@ def evaluate(
         global_step = epoch * len(data_loader) + i
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            save_samples(samples, targets, output_dir, "val", normalized=False, box_fmt="cxcywh")
+            save_samples(samples, targets, output_dir, "val", normalized=False)
 
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
