@@ -13,20 +13,24 @@ import torchvision
 import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
-from torchvision.tv_tensors import BoundingBoxes, Image, KeyPoints, Mask, Video
+from torchvision.tv_tensors import BoundingBoxes, Image, KeyPoints, Mask, Video, wrap
 from ...core import register, create
 
 
 torchvision.disable_beta_transforms_warning()
 
+ClampBoundingBoxes = register()(T.ClampBoundingBoxes)
+ColorJitter = register()(T.ColorJitter)
 ConvertBoundingBoxFormat = register()(T.ConvertBoundingBoxFormat)
+GaussianBlur = register()(T.GaussianBlur)
+RandomAffine = register()(T.RandomAffine)
 RandomCrop = register()(T.RandomCrop)
+RandomErasing = register()(T.RandomErasing)
 RandomHorizontalFlip = register()(T.RandomHorizontalFlip)
 RandomIoUCrop = register()(T.RandomIoUCrop)
 RandomPhotometricDistort = register()(T.RandomPhotometricDistort)
 RandomZoomOut = register()(T.RandomZoomOut)
 Resize = register()(T.Resize)
-SanitizeBoundingBoxes = register()(T.SanitizeBoundingBoxes)
 
 
 @register()
@@ -124,7 +128,6 @@ class Letterbox(T.Transform):
         return padded
 
 
-
 @register()
 class ConvertPILImage(T.Transform):
     _transformed_types = (PIL.Image.Image,)
@@ -134,9 +137,6 @@ class ConvertPILImage(T.Transform):
         self.dtype = dtype
         self.scale = scale
 
-    def make_params(self, *inputs):
-        return {}
-
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         tensor = F.pil_to_tensor(inpt)
         if self.dtype == "float32":
@@ -144,6 +144,7 @@ class ConvertPILImage(T.Transform):
         if self.scale:
             tensor = tensor / 255.0
         return Image(tensor)
+
 
 @register()
 class NormalizeAnnotations(T.Resize):
@@ -159,3 +160,27 @@ class NormalizeAnnotations(T.Resize):
 
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         return super().transform(inpt, params)
+
+
+@register()
+class SanitizeBoundingBoxesWithKeyPoints(T.SanitizeBoundingBoxes):
+    """
+    Until SanitizeBoundingBoxes supports KeyPoints, this is the way.
+    """
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        # Code copied from pytorch source with KeyPoints added.
+        is_label = params["labels"] is not None and any(inpt is label for label in params["labels"])
+        is_bounding_boxes_or_mask_or_keypoints = isinstance(
+            inpt, (BoundingBoxes, Mask, KeyPoints)
+        )
+
+        if not (is_label or is_bounding_boxes_or_mask_or_keypoints):
+            return inpt
+
+        output = inpt[params["valid"]]
+        if is_label:
+            return output
+        else:
+            wrapped = wrap(output, like=inpt)
+            return wrapped

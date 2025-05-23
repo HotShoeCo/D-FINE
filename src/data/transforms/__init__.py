@@ -4,19 +4,23 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
 from ._transforms import (
+    ClampBoundingBoxes,
+    ColorJitter,
     ConvertBoundingBoxFormat,
     ConvertPILImage,
     EmptyTransform,
     Letterbox,
     NormalizeAnnotations,
+    RandomAffine,
     RandomApply,
     RandomCrop,
+    RandomErasing,
     RandomHorizontalFlip,
     RandomIoUCrop,
     RandomPhotometricDistort,
     RandomZoomOut,
     Resize,
-    SanitizeBoundingBoxes,
+    SanitizeBoundingBoxesWithKeyPoints,
 )
 from .container import Compose
 from .mosaic import Mosaic
