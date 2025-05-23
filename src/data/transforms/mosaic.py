@@ -11,6 +11,7 @@ import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 from PIL import Image
 
+from torchvision.tv_tensors import BoundingBoxes, Mask
 from ...core import register
 
 torchvision.disable_beta_transforms_warning()
@@ -68,12 +69,10 @@ class Mosaic(T.Transform):
         if "boxes" in target:
             # target['boxes'] = target['boxes'].clamp(0, 640 * 2 - 1)
             w, h = image.size
-            target["boxes"] = convert_to_tv_tensor(
-                target["boxes"], "boxes", box_format="xyxy", spatial_size=[h, w]
-            )
+            target["boxes"] = BoundingBoxes(target["boxes"], format="xyxy", canvas_size=(h, w))
 
         if "masks" in target:
-            target["masks"] = convert_to_tv_tensor(target["masks"], "masks")
+            target["masks"] = Mask(target["masks"])
 
         image, target = self.random_affine(image, target)
         # image, target = self.resize(image, target)
