@@ -7,7 +7,7 @@ train_dataloader:
         - {type: RandomZoomOut, fill: 0}
         - type: RandomApply
           p: 0.8
-          transforms: 
+          transforms:
             - type: RandomIoUCrop
         - {type: RandomHorizontalFlip}
         - {type: Resize, size: [640, 640] }

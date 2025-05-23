@@ -44,7 +44,7 @@ def save_samples(samples: torch.Tensor, targets: List[Dict], output_dir: str, sp
     for i, (sample, target) in enumerate(zip(samples, targets)):
         sample_visualization = sample.clone().cpu()
         sample_size = F.get_size(sample_visualization)
-        
+
         target_boxes = wrap(target["boxes"].clone().cpu(), like=target["boxes"])
         target_labels = target["labels"].clone().cpu()
         target_image_id = target["image_id"].item()
@@ -58,16 +58,16 @@ def save_samples(samples: torch.Tensor, targets: List[Dict], output_dir: str, sp
 
         # any box format -> xyxy
         target_boxes = F.convert_bounding_box_format(target_boxes, new_format="XYXY")
-        
+
         # clip to image size
         target_boxes = F.clamp_bounding_boxes(target_boxes)
 
         label_strings = [str(int(l)) for l in target_labels.tolist()]
         box_colors = [BOX_COLORS[int(label) % len(BOX_COLORS)] for label in target_labels]
         rendered_img = draw_bounding_boxes(
-            sample_visualization, 
-            target_boxes, 
-            labels=label_strings, 
+            sample_visualization,
+            target_boxes,
+            labels=label_strings,
             colors=box_colors,
             width=3
         )

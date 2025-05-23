@@ -57,7 +57,7 @@ class RandomApply(T.RandomApply):
             t_type = kwargs.pop("type")
             inner_transform = create(t_type, **kwargs)
             instances.append(inner_transform)
-        
+
         super().__init__(torch.nn.ModuleList(instances), p=p)
 
 
