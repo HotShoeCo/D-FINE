@@ -5,10 +5,9 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
-import faster_coco_eval
 import faster_coco_eval.core.mask as coco_mask
+from faster_coco_eval.utils.pytorch import FasterCocoDetection
 import torch
-import torch.utils.data
 import torchvision
 import torchvision.transforms.v2.functional as F
 import os
@@ -19,14 +18,13 @@ from ...core import register
 from ._dataset import DetDataset
 
 torchvision.disable_beta_transforms_warning()
-faster_coco_eval.init_as_pycocotools()
 Image.MAX_IMAGE_PIXELS = None
 
 __all__ = ["CocoDetection"]
 
 
 @register()
-class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
+class CocoDetection(FasterCocoDetection, DetDataset):
     __inject__ = [
         "transforms",
     ]
@@ -35,7 +33,7 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
     def __init__(
         self, img_folder, ann_file, transforms, return_masks=False, remap_mscoco_category=False
     ):
-        super(CocoDetection, self).__init__(img_folder, ann_file)
+        super(FasterCocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(return_masks)
         self.img_folder = img_folder
@@ -50,7 +48,7 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         return img, target
 
     def load_item(self, idx):
-        image, target = super(CocoDetection, self).__getitem__(idx)
+        image, target = super(FasterCocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
         image_path = os.path.join(self.img_folder, self.coco.loadImgs(image_id)[0]["file_name"])
         target = {"image_id": image_id, "image_path": image_path, "annotations": target}
