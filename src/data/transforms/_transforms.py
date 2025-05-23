@@ -67,7 +67,7 @@ class Letterbox(T.Transform):
     Letterbox transform that resizes the input to fit within a canvas of the specified size
     while preserving aspect ratio. The resized content is centered on the canvas, and the
     remaining area is padded with the given fill value and padding mode.
-    
+
     Args:
         canvas_size (tuple[int, int]): The (height, width) of the output canvas.
         fill (int or tuple[int]): Padding fill value for image/video/mask axes.
