@@ -191,22 +191,14 @@ def evaluate(
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
 
         outputs = model(samples)
-        # with torch.autocast(device_type=str(device)):
-        #     outputs = model(samples)
 
         # TODO (lyuwenyu), fix dataset converted using `convert_to_coco_api`?
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        # orig_target_sizes = torch.tensor([[samples.shape[-1], samples.shape[-2]]], device=samples.device)
-
         results = postprocessor(outputs, orig_target_sizes)
 
-        # if 'segm' in postprocessor.keys():
-        #     target_sizes = torch.stack([t["size"] for t in targets], dim=0)
-        #     results = postprocessor['segm'](results, outputs, orig_target_sizes, target_sizes)
-
-        res = {target["image_id"].item(): output for target, output in zip(targets, results)}
         if coco_evaluator is not None:
-            coco_evaluator.update(res)
+            coco_results = _format_coco_results(targets, results)
+            coco_evaluator.update(coco_results)
 
         # validator format for metrics
         for idx, (target, result) in enumerate(zip(targets, results)):
@@ -244,16 +236,38 @@ def evaluate(
         coco_evaluator.synchronize_between_processes()
 
     # accumulate predictions from all images
+    stats = {}
     if coco_evaluator is not None:
         coco_evaluator.accumulate()
         coco_evaluator.summarize()
 
-    stats = {}
-    # stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    if coco_evaluator is not None:
         if "bbox" in iou_types:
             stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
         if "segm" in iou_types:
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
+        if "keypoints" in iou_types:
+            stats["coco_eval_keypoints"] = coco_evaluator.coco_eval["keypoints"].stats.tolist()
 
     return stats, coco_evaluator
+
+
+def _format_coco_results(targets, results):
+    res = {}
+    for target, output in zip(targets, results):
+        image_id = target["image_id"].item()
+        if "keypoints" in output:
+            # Convert from [K,2] tensor to flat [x1, y1, v1, x2, y2, v2, ...]
+            kpt_tensor = output["keypoints"]  # [..., 17, 2]
+            # Annotations will put (x,y) = (0,0) when keypoints are invisible. 
+            # Set v=2 if not at the origin, v=0 otherwise.
+            v = torch.where(
+                (kpt_tensor[..., 0] + kpt_tensor[..., 1]) == 0,
+                torch.tensor(0, device=kpt_tensor.device, dtype=kpt_tensor.dtype),
+                torch.tensor(2, device=kpt_tensor.device, dtype=kpt_tensor.dtype),
+            )
+
+            output["keypoints"] = torch.cat([kpt_tensor, v.unsqueeze(-1)], dim=-1)
+
+        res[image_id] = output
+
+    return res

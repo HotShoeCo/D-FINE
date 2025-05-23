@@ -135,6 +135,10 @@ class DFINECriterion(nn.Module):
         losses["loss_giou"] = loss_giou.sum() / num_boxes
 
         return losses
+    
+    def loss_keypoints(self, outputs, targets, indices, num_boxes, boxes_weight=None):
+        #TODOBB
+        return self.loss_boxes(outputs, targets, indices, num_boxes, boxes_weight)
 
     def loss_local(self, outputs, targets, indices, num_boxes, T=5):
         """Compute Fine-Grained Localization (FGL) Loss
@@ -274,8 +278,9 @@ class DFINECriterion(nn.Module):
         loss_map = {
             "boxes": self.loss_boxes,
             "focal": self.loss_labels_focal,
-            "vfl": self.loss_labels_vfl,
+            "keypoints": self.loss_keypoints,
             "local": self.loss_local,
+            "vfl": self.loss_labels_vfl,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)

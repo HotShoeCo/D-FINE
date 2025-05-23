@@ -35,10 +35,17 @@ class DFINEPostProcessor(nn.Module):
     def extra_repr(self) -> str:
         return f"use_focal_loss={self.use_focal_loss}, num_classes={self.num_classes}, num_top_queries={self.num_top_queries}"
 
-    # def forward(self, outputs, orig_target_sizes):
     def forward(self, outputs, orig_target_sizes: torch.Tensor):
-        logits, boxes = outputs["pred_logits"], outputs["pred_boxes"]
-        # orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+        logits = outputs["pred_logits"]
+        boxes = outputs["pred_boxes"]
+        keypoints = outputs.get("pred_keypoints", None)
+
+        if keypoints is not None:
+            batch_size, _, num_kpts, _ = keypoints.shape
+            # keypoints are [B, N, K, 2], normalized; scale by image width/height
+            # orig_target_sizes is [B, 2] (width, height)
+            scale = orig_target_sizes.view(batch_size, 1, 1, 2)
+            keypoints *= scale
 
         bbox_pred = torchvision.ops.box_convert(boxes, in_fmt="cxcywh", out_fmt="xyxy")
         bbox_pred *= orig_target_sizes.repeat(1, 2).unsqueeze(1)
@@ -53,6 +60,12 @@ class DFINEPostProcessor(nn.Module):
             boxes = bbox_pred.gather(
                 dim=1, index=index.unsqueeze(-1).repeat(1, 1, bbox_pred.shape[-1])
             )
+            if keypoints is not None:
+                keypoints = keypoints.gather(
+                    dim=1,
+                    index=index.view(batch_size, self.num_top_queries, 1, 1)
+                          .expand(batch_size, self.num_top_queries, num_kpts, 2)
+                )
 
         else:
             scores = F.softmax(logits)[:, :, :-1]
@@ -63,10 +76,16 @@ class DFINEPostProcessor(nn.Module):
                 boxes = torch.gather(
                     boxes, dim=1, index=index.unsqueeze(-1).tile(1, 1, boxes.shape[-1])
                 )
+                if keypoints is not None:
+                    keypoints = keypoints.gather(
+                        dim=1,
+                        index=index.view(batch_size, self.num_top_queries, 1, 1)
+                              .expand(batch_size, self.num_top_queries, num_kpts, 2)
+                    )
 
         # TODO for onnx export
         if self.deploy_mode:
-            return labels, boxes, scores
+            return labels, boxes, scores, keypoints
 
         # TODO
         if self.remap_mscoco_category:
@@ -79,8 +98,10 @@ class DFINEPostProcessor(nn.Module):
             )
 
         results = []
-        for lab, box, sco in zip(labels, boxes, scores):
+        for i, (lab, box, sco) in enumerate(zip(labels, boxes, scores)):
             result = dict(labels=lab, boxes=box, scores=sco)
+            if keypoints is not None:
+                result["keypoints"] = keypoints[i]
             results.append(result)
 
         return results

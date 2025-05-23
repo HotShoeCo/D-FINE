@@ -13,7 +13,7 @@ import torchvision.transforms.v2.functional as F
 import os
 
 from PIL import Image
-from torchvision.tv_tensors import BoundingBoxes, Mask
+from torchvision.tv_tensors import BoundingBoxes, KeyPoints, Mask
 from ...core import register
 from ._dataset import DetDataset
 
@@ -67,6 +67,12 @@ class CocoDetection(FasterCocoDetection, DetDataset):
 
         if "masks" in target:
             target["masks"] = Mask(target["masks"])
+
+        if "keypoints" in target:
+            # KeyPoints only have x,y, no v. Chop it.
+            # Typically annotations will set (x, y) = (0, 0) when v=0.
+            kp = target["keypoints"][..., :2]
+            target["keypoints"] = KeyPoints(kp, canvas_size=canvas_size)
 
         return image, target
 
@@ -275,6 +281,16 @@ mscoco_category2name = {
     88: "teddy bear",
     89: "hair drier",
     90: "toothbrush",
+}
+
+mscoco_category2meta = {
+    1: {
+        "num_keypoints": 17,
+        "sigmas": [
+            0.26, 0.25, 0.25, 0.35, 0.35, 0.79, 0.79, 0.72, 0.72, 0.62,
+            0.62, 1.07, 1.07, 0.87, 0.89, 0.79, 0.96
+        ]
+    },
 }
 
 mscoco_category2label = {k: i for i, k in enumerate(mscoco_category2name.keys())}
