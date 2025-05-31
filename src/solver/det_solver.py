@@ -89,6 +89,7 @@ class DetSolver(BaseSolver):
                 writer=self.writer,
                 use_wandb=self.use_wandb,
                 output_dir=self.output_dir,
+                num_visualization_sample_batch=self.cfg.num_visualization_sample_batch,
             )
 
             if self.lr_warmup_scheduler is None or self.lr_warmup_scheduler.finished():

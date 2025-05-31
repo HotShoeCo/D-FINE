@@ -75,7 +75,15 @@ def _get_alternating_colors(count):
     ]
 
 
-def save_samples(output_dir: str, split: str, samples: torch.Tensor, targets: List[Dict], preds: Optional[List[Dict]] = None, normalized: bool = False):
+def save_samples(
+    output_dir: str,
+    split: str,
+    samples: torch.Tensor,
+    targets: List[Dict],
+    preds: Optional[List[Dict]]=None,
+    min_score: Optional[float]=0.5,
+    normalized: bool=False
+):
     '''
     normalized: whether the boxes are normalized to [0, 1]
     preds: optional list of prediction dicts with "boxes" and optionally "keypoints"
@@ -97,26 +105,44 @@ def save_samples(output_dir: str, split: str, samples: torch.Tensor, targets: Li
         if normalized:
             sample_visualization = F.to_dtype(sample_visualization, torch.uint8, scale=True)
 
-        label_strings = [str(int(l)) for l in target["labels"].clone().cpu().tolist()]
-
         # draw predictions if provided
         if pred is not None:
-            pred_boxes = wrap(pred["boxes"].clone().cpu(), like=pred["boxes"])
-            pred_kps = pred.get("keypoints")
+            filter = pred["scores"] > min_score
+
+            pred_labels = pred["labels"][filter]
+            pred_label_strings = [str(int(l)) for l in pred_labels.clone().cpu().tolist()]
+
+            pred_boxes = pred["boxes"][filter].clone().cpu()
+            pred_boxes = wrap(pred_boxes, like=pred["boxes"])
+
+            if "keypoints" in pred:
+                pred_kps = pred["keypoints"][filter].clone().cpu()
+                pred_kps = wrap(pred_kps, like=pred["keypoints"])
+
             rendered_img = _draw_annotations(
-                sample_visualization, pred_boxes, pred_kps, None,
-                normalized, sample_size,
+                sample_visualization,
+                pred_boxes,
+                pred_kps,
+                pred_label_strings,
+                normalized,
+                sample_size,
                 colors=_get_alternating_colors(pred_boxes.shape[0]),
-                width=3, radius=5
+                width=3,
+                radius=5
             )
+
             # draw ground truth in lime
+            gt_label_strings = [str(int(l)) for l in target["labels"].clone().cpu().tolist()]
             gt_boxes = wrap(target["boxes"].clone().cpu(), like=target["boxes"])
             gt_kps = target.get("keypoints")
+            if gt_kps is not None:
+                gt_kps = wrap(gt_kps.clone().cpu(), like=gt_kps)
+            
             rendered_img = _draw_annotations(
                 rendered_img,
                 gt_boxes,
                 gt_kps,
-                label_strings,
+                gt_label_strings,
                 normalized,
                 sample_size,
                 colors="lime",
@@ -125,6 +151,7 @@ def save_samples(output_dir: str, split: str, samples: torch.Tensor, targets: Li
             )
         else:
             # no preds: rotate GT colors
+            label_strings = [str(int(l)) for l in target["labels"].clone().cpu().tolist()]
             gt_boxes = wrap(target["boxes"].clone().cpu(), like=target["boxes"])
             gt_kps = target.get("keypoints")
             rendered_img = _draw_annotations(

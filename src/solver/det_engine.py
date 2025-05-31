@@ -183,18 +183,17 @@ def evaluate(
 
     for i, (samples, targets) in enumerate(metric_logger.log_every(data_loader, 10, header)):
         global_step = epoch * len(data_loader) + i
-
-        if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            save_samples(output_dir, "val", samples, targets, normalized=False)
-
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
-
         outputs = model(samples)
 
         # TODO (lyuwenyu), fix dataset converted using `convert_to_coco_api`?
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         results = postprocessor(outputs, orig_target_sizes)
+
+        if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
+            save_samples(output_dir, "val", samples, targets, normalized=False)
+            save_samples(output_dir, "pred", samples, targets, results, normalized=False)
 
         if coco_evaluator is not None:
             coco_results = _format_coco_results(targets, results)

@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
+from torchvision.tv_tensors import BoundingBoxes, KeyPoints
 from ...core import register
 
 __all__ = ["DFINEPostProcessor"]
@@ -97,11 +98,13 @@ class DFINEPostProcessor(nn.Module):
                 .reshape(labels.shape)
             )
 
+        # Package results and wrap tv tensor types.
         results = []
-        for i, (lab, box, sco) in enumerate(zip(labels, boxes, scores)):
-            result = dict(labels=lab, boxes=box, scores=sco)
+        for i, (lab, box, sco, size) in enumerate(zip(labels, boxes, scores, orig_target_sizes)):
+            tvbox = BoundingBoxes(box, format="XYXY", canvas_size=size)
+            result = dict(labels=lab, boxes=tvbox, scores=sco)
             if keypoints is not None:
-                result["keypoints"] = keypoints[i]
+                result["keypoints"] = KeyPoints(keypoints[i], canvas_size=size)
             results.append(result)
 
         return results
