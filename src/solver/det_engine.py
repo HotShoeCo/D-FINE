@@ -13,9 +13,10 @@ from typing import Dict, Iterable, List
 import numpy as np
 import torch
 import torch.amp
+import torchvision.transforms.v2.functional as F
+
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.tensorboard import SummaryWriter
-
 from ..data import CocoEvaluator
 from ..data.dataset import mscoco_category2label
 from ..misc import MetricLogger, SmoothedValue, dist_utils, save_samples
@@ -188,7 +189,7 @@ def evaluate(
         outputs = model(samples)
 
         # TODO (lyuwenyu), fix dataset converted using `convert_to_coco_api`?
-        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+        orig_target_sizes = torch.tensor([F.get_size(s) for s in samples])
         results = postprocessor(outputs, orig_target_sizes)
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
