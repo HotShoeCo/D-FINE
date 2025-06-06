@@ -330,18 +330,3 @@ def filter_preds(preds, conf_thresh):
         pred["boxes"] = pred["boxes"][keep_idxs]
         pred["labels"] = pred["labels"][keep_idxs]
     return preds
-
-
-def scale_boxes(boxes, orig_shape, resized_shape):
-    """
-    boxes in format: [x1, y1, x2, y2], absolute values
-    orig_shape: [height, width]
-    resized_shape: [height, width]
-    """
-    scale_x = orig_shape[1] / resized_shape[1]
-    scale_y = orig_shape[0] / resized_shape[0]
-    boxes[:, 0] *= scale_x
-    boxes[:, 2] *= scale_x
-    boxes[:, 1] *= scale_y
-    boxes[:, 3] *= scale_y
-    return boxes

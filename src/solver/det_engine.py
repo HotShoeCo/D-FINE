@@ -13,15 +13,17 @@ from typing import Dict, Iterable, List
 import numpy as np
 import torch
 import torch.amp
+import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
+from copy import deepcopy
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 from ..data import CocoEvaluator
 from ..data.dataset import mscoco_category2label
 from ..misc import MetricLogger, SmoothedValue, dist_utils, save_samples
 from ..optim import ModelEMA, Warmup
-from .validator import Validator, scale_boxes
+from .validator import Validator
 
 
 def train_one_epoch(
@@ -64,7 +66,8 @@ def train_one_epoch(
         metas = dict(epoch=epoch, step=i, global_step=global_step, epoch_step=len(data_loader))
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            save_samples(output_dir, "train", samples, targets, normalized=True)
+            annotations = _denormalize_annotations(targets, samples)
+            save_samples(output_dir, "train", samples, annotations, targets)
 
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
@@ -148,6 +151,21 @@ def train_one_epoch(
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
+def _denormalize_annotations(annotations, samples):
+    annotations = deepcopy(annotations)
+    for sample, anno in zip(samples, annotations):
+        canvas_size = F.get_size(sample)
+
+        boxes = F.resize(anno["boxes"], size=canvas_size)
+        boxes = F.convert_bounding_box_format(boxes, new_format="XYXY")
+        anno["boxes"] = boxes
+
+        if "keypoints" in anno:
+            anno["keypoints"] = F.resize(anno["keypoints"], size=canvas_size)
+
+    return annotations
+
+
 @torch.no_grad()
 def evaluate(
     model: torch.nn.Module,
@@ -170,12 +188,7 @@ def evaluate(
     metric_logger = MetricLogger(delimiter="  ")
     # metric_logger.add_meter('class_error', SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = "Test:"
-
-    # iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessor.keys())
     iou_types = coco_evaluator.iou_types
-    # coco_evaluator = CocoEvaluator(base_ds, iou_types)
-    # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
-
     gt: List[Dict[str, torch.Tensor]] = []
     preds: List[Dict[str, torch.Tensor]] = []
 
@@ -187,38 +200,32 @@ def evaluate(
         samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
         outputs = model(samples)
-
-        # TODO (lyuwenyu), fix dataset converted using `convert_to_coco_api`?
-        orig_target_sizes = torch.tensor([F.get_size(s) for s in samples])
-        results = postprocessor(outputs, orig_target_sizes)
+        targets, results = postprocessor(samples, outputs, targets)
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            save_samples(output_dir, "val", samples, targets, normalized=False)
-            save_samples(output_dir, "pred", samples, targets, results, normalized=False)
+            transformed_samples = [res["image"] for res in results]
+            save_samples(output_dir, "val", transformed_samples, targets, targets)
+            save_samples(output_dir, "pred", transformed_samples, results, targets)
 
         if coco_evaluator is not None:
             coco_results = _format_coco_results(targets, results)
             coco_evaluator.update(coco_results)
 
         # validator format for metrics
-        for idx, (target, result) in enumerate(zip(targets, results)):
-            gt.append(
-                {
-                    "boxes": scale_boxes(  # from model input size to original img size
-                        target["boxes"],
-                        (target["orig_size"][1], target["orig_size"][0]),
-                        (samples[idx].shape[-1], samples[idx].shape[-2]),
-                    ),
-                    "labels": target["labels"],
-                }
-            )
-            labels = (
+        for target, result in zip(targets, results):
+            gt.append({
+                "boxes": target["boxes"],
+                "labels": target["labels"],
+            })
+
+            pred_labels = (
                 torch.tensor([mscoco_category2label[int(x.item())] for x in result["labels"].flatten()])
                 .to(result["labels"].device)
                 .reshape(result["labels"].shape)
             ) if postprocessor.remap_mscoco_category else result["labels"]
+
             preds.append(
-                {"boxes": result["boxes"], "labels": labels, "scores": result["scores"]}
+                {"boxes": result["boxes"], "labels": pred_labels, "scores": result["scores"]}
             )
 
     # Conf matrix, F1, Precision, Recall, box IoU
@@ -251,23 +258,34 @@ def evaluate(
     return stats, coco_evaluator
 
 
+def _format_coco_keypoints(keypoints):
+    """
+    Given a tensor of shape [N, K, 2] a new tensor of shape [N, K, 3] will be returned with the third coordinate, visbility, set appropriately.
+    Returns the flattened tensor and the number of visible keypoints.
+    """
+    # Annotations will put (x,y) = (0,0) when keypoints are invisible.
+    # Set v=2 if not at the origin, v=0 otherwise.
+    v = torch.where(
+        (keypoints[..., 0] + keypoints[..., 1]) == 0,
+        torch.tensor(0, device=keypoints.device, dtype=keypoints.dtype),
+        torch.tensor(2, device=keypoints.device, dtype=keypoints.dtype),
+    )
+
+    kpt = torch.cat([keypoints, v.unsqueeze(-1)], dim=-1)
+    return kpt
+
+
 def _format_coco_results(targets, results):
-    res = {}
-    for target, output in zip(targets, results):
-        image_id = target["image_id"].item()
-        if "keypoints" in output:
-            # Convert from [K,2] tensor to flat [x1, y1, v1, x2, y2, v2, ...]
-            kpt_tensor = output["keypoints"]  # [..., 17, 2]
-            # Annotations will put (x,y) = (0,0) when keypoints are invisible. 
-            # Set v=2 if not at the origin, v=0 otherwise.
-            v = torch.where(
-                (kpt_tensor[..., 0] + kpt_tensor[..., 1]) == 0,
-                torch.tensor(0, device=kpt_tensor.device, dtype=kpt_tensor.dtype),
-                torch.tensor(2, device=kpt_tensor.device, dtype=kpt_tensor.dtype),
-            )
+    results = deepcopy(results)
 
-            output["keypoints"] = torch.cat([kpt_tensor, v.unsqueeze(-1)], dim=-1)
+    coco_results = {}
+    for tgt, res in zip(targets, results):
+        # While COCO is in XYWH format, the evaluator expects XYXY and converts internally.
+        res["boxes"] = F.convert_bounding_box_format(res["boxes"], new_format="XYXY")
 
-        res[image_id] = output
+        if "keypoints" in res:
+            res["keypoints"] = _format_coco_keypoints(res["keypoints"])
 
-    return res
+        coco_results[tgt["image_id"].item()] = res
+
+    return coco_results

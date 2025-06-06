@@ -3,8 +3,6 @@ Copied from RT-DETR (https://github.com/lyuwenyu/RT-DETR)
 Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
-from typing import Any, Dict, List, Optional
-
 import PIL
 import PIL.Image
 import torch
@@ -14,6 +12,7 @@ import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
 from torchvision.tv_tensors import BoundingBoxes, Image, KeyPoints, Mask, Video, wrap
+from typing import Any, Dict, Tuple
 from ...core import register, create
 
 
@@ -96,7 +95,6 @@ class Letterbox(T.Transform):
         self.padding_mode = padding_mode
 
     def make_params(self, inpt: Any) -> Dict[str, Any]:
-        inpt = inpt if len(inpt) > 1 else inpt[0]
         input_h, input_w = F.get_size(inpt[0])
         canvas_h, canvas_w = self.canvas_size
         scale = min(canvas_h / input_h, canvas_w / input_w)
@@ -129,6 +127,111 @@ class Letterbox(T.Transform):
 
 
 @register()
+class UnLetterbox(T.Transform):
+    """
+    A Transform that undoes a Letterbox(…) operation on BoundingBoxes or KeyPoints,
+    given the original image size (h,w).
+
+    It recomputes the same scale & padding that Letterbox would have used,
+    then subtracts the padding and divides by that scale. Finally, it clamps
+    so no coordinate exceeds the original image's boundaries.
+
+    Usage:
+       unletter = UnLetterbox(orig_size=(orig_h,orig_w), canvas_size=(canvas_h,canvas_w))
+       boxes_640 = ...        # a BoundingBoxes in the 640x640 frame
+       boxes_orig = unletter.transform(boxes_640, params=None)
+       # output boxes_orig has shape [N,4], in the original pixel frame.
+
+       kp_640 = ...           # KeyPoints in the 640x640 frame
+       kp_orig = unletter.transform(kp_640, params=None)
+    """
+
+    _transformed_types = (
+        PIL.Image.Image,
+        Image,
+        Video,
+        Mask,
+        BoundingBoxes,
+        KeyPoints,
+    )
+
+
+    def __call__(self, *inpt: Any):
+        self.orig_canvas_size = inpt[0]["orig_canvas_size"]
+        return super().__call__(inpt)
+
+    def make_params(self, flattened_inputs: Any) -> Dict[str, Any]:
+        input_img = flattened_inputs[0]
+        lb_canvas_h, lb_canvas_w = F.get_size(input_img)
+        orig_content_h, orig_content_w = self.orig_canvas_size
+
+        # Recompute scale and padding exactly like Letterbox.make_params.
+        scale = min(lb_canvas_h / orig_content_h, lb_canvas_w / orig_content_w)
+        lb_content_h = int(orig_content_h * scale)
+        lb_content_w = int(orig_content_w * scale)
+
+        pad_h_total = lb_canvas_h - lb_content_h
+        pad_w_total = lb_canvas_w - lb_content_w
+
+        pad_top = pad_h_total // 2
+        pad_left = pad_w_total // 2
+        # pad_bottom, pad_right are unnecessary.
+
+        return {
+            "content_size": (lb_content_h, lb_content_w),
+            "pad_left": pad_left,
+            "pad_top": pad_top,
+            # "scale": scale,
+        }
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        content_h, content_w = params["content_size"]
+        pad_left = params["pad_left"]
+        pad_top = params["pad_top"]
+        # scale = params["scale"]
+
+        # if isinstance(inpt, BoundingBoxes):
+        #     boxes = inpt.tensor  # shape: [N,4]
+
+        #     # Subtract out the letterbox padding, then divide by scale.
+        #     x1 = (boxes[:, 0] - pad_left) / scale
+        #     y1 = (boxes[:, 1] - pad_top) / scale
+        #     x2 = (boxes[:, 2] - pad_left) / scale
+        #     y2 = (boxes[:, 3] - pad_top) / scale
+
+        #     # Clamp to content size.
+        #     x1 = x1.clamp(0.0, float(content_w))
+        #     y1 = y1.clamp(0.0, float(content_h))
+        #     x2 = x2.clamp(0.0, float(content_w))
+        #     y2 = y2.clamp(0.0, float(content_h))
+
+        #     unboxed = torch.stack([x1, y1, x2, y2], dim=1)
+        #     return wrap(unboxed, like=inpt)
+
+        # if isinstance(inpt, KeyPoints):
+        #     kpts = inpt.tensor  # shape: [N, K, 2]
+
+        #     # Subtract out the letterbox padding, then divide by scale.
+        #     x = (kpts[..., 0] - pad_left) / scale
+        #     y = (kpts[..., 1] - pad_top) / scale
+
+        #     # Clamp to content size.
+        #     x = x.clamp(0.0, float(content_w))
+        #     y = y.clamp(0.0, float(content_h))
+
+        #     unkpt = torch.stack([x, y], dim=-1)  # shape: [N, K, 2]
+        #     return wrap(unkpt, like=inpt)
+
+        cropped = F.crop(inpt, pad_top, pad_left, content_h, content_w)
+        resized = F.resize(cropped, size=self.orig_canvas_size)
+        return resized
+
+
+        # For any other types, return unchanged.
+#        return inpt
+
+
+@register()
 class ConvertPILImage(T.Transform):
     _transformed_types = (PIL.Image.Image,)
 
@@ -153,7 +256,7 @@ class NormalizeAnnotations(T.Resize):
     Uses T.Resize to set the canvas size down to (1,1) and which will normalize any TVTensor type with supported transform kernels.
     """
 
-    _transformed_types = (BoundingBoxes, Mask)
+    _transformed_types = (BoundingBoxes, KeyPoints, Mask)
 
     def __init__(self) -> None:
         super().__init__(size=(1, 1))

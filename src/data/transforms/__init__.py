@@ -21,6 +21,7 @@ from ._transforms import (
     RandomZoomOut,
     Resize,
     SanitizeBoundingBoxesWithKeyPoints,
+    UnLetterbox,
 )
 from .container import Compose
 from .mosaic import Mosaic
