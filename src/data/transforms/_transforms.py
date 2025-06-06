@@ -181,54 +181,15 @@ class UnLetterbox(T.Transform):
             "content_size": (lb_content_h, lb_content_w),
             "pad_left": pad_left,
             "pad_top": pad_top,
-            # "scale": scale,
         }
 
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         content_h, content_w = params["content_size"]
         pad_left = params["pad_left"]
         pad_top = params["pad_top"]
-        # scale = params["scale"]
-
-        # if isinstance(inpt, BoundingBoxes):
-        #     boxes = inpt.tensor  # shape: [N,4]
-
-        #     # Subtract out the letterbox padding, then divide by scale.
-        #     x1 = (boxes[:, 0] - pad_left) / scale
-        #     y1 = (boxes[:, 1] - pad_top) / scale
-        #     x2 = (boxes[:, 2] - pad_left) / scale
-        #     y2 = (boxes[:, 3] - pad_top) / scale
-
-        #     # Clamp to content size.
-        #     x1 = x1.clamp(0.0, float(content_w))
-        #     y1 = y1.clamp(0.0, float(content_h))
-        #     x2 = x2.clamp(0.0, float(content_w))
-        #     y2 = y2.clamp(0.0, float(content_h))
-
-        #     unboxed = torch.stack([x1, y1, x2, y2], dim=1)
-        #     return wrap(unboxed, like=inpt)
-
-        # if isinstance(inpt, KeyPoints):
-        #     kpts = inpt.tensor  # shape: [N, K, 2]
-
-        #     # Subtract out the letterbox padding, then divide by scale.
-        #     x = (kpts[..., 0] - pad_left) / scale
-        #     y = (kpts[..., 1] - pad_top) / scale
-
-        #     # Clamp to content size.
-        #     x = x.clamp(0.0, float(content_w))
-        #     y = y.clamp(0.0, float(content_h))
-
-        #     unkpt = torch.stack([x, y], dim=-1)  # shape: [N, K, 2]
-        #     return wrap(unkpt, like=inpt)
-
         cropped = F.crop(inpt, pad_top, pad_left, content_h, content_w)
         resized = F.resize(cropped, size=self.orig_canvas_size)
         return resized
-
-
-        # For any other types, return unchanged.
-#        return inpt
 
 
 @register()
