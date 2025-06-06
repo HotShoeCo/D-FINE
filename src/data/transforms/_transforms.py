@@ -12,7 +12,7 @@ import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
 from torchvision.tv_tensors import BoundingBoxes, Image, KeyPoints, Mask, Video, wrap
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 from ...core import register, create
 
 
@@ -248,3 +248,38 @@ class SanitizeBoundingBoxesWithKeyPoints(T.SanitizeBoundingBoxes):
         else:
             wrapped = wrap(output, like=inpt)
             return wrapped
+
+
+@register()
+class EncodeInvisibleKeyPoints(T.Transform):
+    """
+    Some annotations styles will place invisible keypoints at 0,0 in the image.
+    This will set those values to (NaN, NaN) so further transforms ignore them.
+    This must be followed up at the end of the transformation pipeline by DecodeInvisibleKeyPoints.
+    """
+
+    _transformed_types = (KeyPoints,)
+
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        coords = inpt.clone()
+        mask = (coords[..., 0] == 0) & (coords[..., 1] == 0)
+        coords[mask] = float("nan")
+        return coords
+
+
+@register()
+class DecodeInvisibleKeyPoints(T.Transform):
+    """
+    After all the geometric ops, find any NaN in KeyPoints and force it back to 0.
+    That returns invisible keypoints to (0,0) on the final canvas.
+    """
+
+    _transformed_types = (KeyPoints,)
+
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        coords = inpt.clone()
+        nan_mask = torch.isnan(coords)
+        coords[nan_mask] = 0.0
+        return coords
