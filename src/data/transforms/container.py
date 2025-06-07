@@ -13,8 +13,6 @@ import torchvision.transforms.v2 as T
 from ...core import GLOBAL_CONFIG, register
 from ._transforms import EmptyTransform
 
-torchvision.disable_beta_transforms_warning()
-
 
 @register()
 class Compose(T.Compose):

@@ -145,7 +145,7 @@ class DFINEPostProcessor(nn.Module):
 
     def _run_transforms(self, targets, results):
         if self.transforms is None:
-            return results
+            return targets, results
 
         transformed_results = []
         transformed_targets = []

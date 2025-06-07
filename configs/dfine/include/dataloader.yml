@@ -1,31 +1,40 @@
+eval_spatial_size: &eval_spatial_size [640, 640] # (h,w)
 
 train_dataloader:
   dataset:
     transforms:
       ops:
-        - {type: RandomPhotometricDistort, p: 0.5}
-        - {type: RandomZoomOut, fill: 0}
-        - type: RandomApply
+        - type: EncodeInvisibleKeyPoints
+        - type: ClampBoundingBoxes
+        - type: RandomHorizontalFlip
+        - type: RandomPhotometricDistort
+          p: 0.2
+        - type: RandomZoomOut
+          fill: 0
+        - type: RandomIoUCrop
           p: 0.8
-          transforms:
-            - type: RandomIoUCrop
-        - {type: RandomHorizontalFlip}
-        - {type: Resize, size: [640, 640] }
-        - {type: SanitizeBoundingBoxes, min_size: 1}
-        - {type: ConvertPILImage, dtype: 'float32', scale: True}
-        - {type: ConvertBoundingBoxFormat, format: 'CXCYWH'}
-        - {type: NormalizeAnnotations}
+        - type: SanitizeBoundingBoxesWithKeyPoints
+          min_size: 1
+        - type: Resize
+          size: *eval_spatial_size
+        - type: ConvertPILImage
+          dtype: 'float32'
+          scale: True
+        - type: ConvertBoundingBoxFormat
+          format: "CXCYWH"
+        - type: NormalizeAnnotations
+        - type: DecodeInvisibleKeyPoints
       policy:
         name: stop_epoch
         epoch: 72 # epoch in [71, ~) stop `ops`
-        ops: ['RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
-
+        ops:
+          - RandomPhotometricDistort
+          - RandomZoomOut
+          - RandomIoUCrop
   collate_fn:
     type: BatchImageCollateFunction
-    base_size: 640
     base_size_repeat: 3
     stop_epoch: 72 # epoch in [72, ~) stop `multiscales`
-
   shuffle: True
   total_batch_size: 32 # total batch size equals to 32 (4 * 8)
   num_workers: 4
@@ -35,8 +44,13 @@ val_dataloader:
   dataset:
     transforms:
       ops:
-        - {type: Resize, size: [640, 640], }
-        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - type: Resize
+          size: *eval_spatial_size
+        - type: ConvertBoundingBoxFormat
+          format: "CXCYWH"
+        - type: ConvertPILImage
+          dtype: 'float32'
+          scale: True
   shuffle: False
   total_batch_size: 64
   num_workers: 4

@@ -17,7 +17,6 @@ from torchvision.tv_tensors import BoundingBoxes, KeyPoints, Mask
 from ...core import register
 from ._dataset import DetDataset
 
-torchvision.disable_beta_transforms_warning()
 Image.MAX_IMAGE_PIXELS = None
 
 __all__ = ["CocoDetection"]

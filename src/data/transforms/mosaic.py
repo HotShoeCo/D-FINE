@@ -14,8 +14,6 @@ from PIL import Image
 from torchvision.tv_tensors import BoundingBoxes, Mask
 from ...core import register
 
-torchvision.disable_beta_transforms_warning()
-
 
 @register()
 class Mosaic(T.Transform):

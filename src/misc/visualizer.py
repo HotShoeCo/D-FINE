@@ -18,8 +18,6 @@ from torchvision.utils import draw_bounding_boxes, draw_keypoints
 from typing import Optional, Tuple, List, Dict, Union
 
 
-torchvision.disable_beta_transforms_warning()
-
 __all__ = ["show_sample", "save_samples"]
 
 BOX_COLORS = [

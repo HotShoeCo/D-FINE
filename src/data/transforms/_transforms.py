@@ -5,6 +5,7 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 
 import PIL
 import PIL.Image
+import random
 import torch
 import torch.nn as nn
 import torchvision
@@ -16,8 +17,6 @@ from typing import Any, Dict
 from ...core import register, create
 
 
-torchvision.disable_beta_transforms_warning()
-
 ClampBoundingBoxes = register()(T.ClampBoundingBoxes)
 ColorJitter = register()(T.ColorJitter)
 ConvertBoundingBoxFormat = register()(T.ConvertBoundingBoxFormat)
@@ -26,7 +25,6 @@ RandomAffine = register()(T.RandomAffine)
 RandomCrop = register()(T.RandomCrop)
 RandomErasing = register()(T.RandomErasing)
 RandomHorizontalFlip = register()(T.RandomHorizontalFlip)
-RandomIoUCrop = register()(T.RandomIoUCrop)
 RandomPhotometricDistort = register()(T.RandomPhotometricDistort)
 RandomZoomOut = register()(T.RandomZoomOut)
 Resize = register()(T.Resize)
@@ -39,29 +37,44 @@ class EmptyTransform(T.Transform):
     ) -> None:
         super().__init__()
 
-    def make_params(self, *inputs):
-        return {}
-
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         return inpt
 
 
 @register()
-class RandomApply(T.RandomApply):
+class RandomIoUCrop(T.RandomIoUCrop):
     """
-    A thin wrapper around T.RandomApply to accomodate the yaml config parser instantiating nested transform objects.
+    A thin wrapper around T.RandomIoUCrop to add a p param.
     """
 
-    def __init__(self, transforms: list, p: float = 1.0) -> None:
-        # Build the inner transforms; this is what wasn't working when trying to use T.RandomApply straight from the config.
-        instances = []
-        for t in transforms:
-            kwargs = t.copy()
-            t_type = kwargs.pop("type")
-            inner_transform = create(t_type, **kwargs)
-            instances.append(inner_transform)
+    _transformed_types = (
+        PIL.Image.Image,
+        Image,
+        Video,
+        Mask,
+        BoundingBoxes,
+        KeyPoints,
+    )
 
-        super().__init__(torch.nn.ModuleList(instances), p=p)
+    
+    def __init__(self, p: float = 1.0, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.p = p
+
+    def make_params(self, inpts: Any) -> Dict[str, Any]:
+        # Parent class will return empty params if there's no valid IoU crop to be made.
+        parent_params = super().make_params(inpts)
+        r = random.random()
+
+        # Simulate no IoU if the probably test failed.
+        params = {} if r > self.p else parent_params
+        return params
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        if not params:
+            return inpt
+        
+        return super().transform(inpt, params)
 
 
 @register()
@@ -94,8 +107,9 @@ class Letterbox(T.Transform):
         self.fill = fill
         self.padding_mode = padding_mode
 
-    def make_params(self, inpt: Any) -> Dict[str, Any]:
-        input_h, input_w = F.get_size(inpt[0])
+    def make_params(self, inpts: Any) -> Dict[str, Any]:
+        img = inpts[0]
+        input_h, input_w = F.get_size(img)
         canvas_h, canvas_w = self.canvas_size
         scale = min(canvas_h / input_h, canvas_w / input_w)
         content_h, content_w = int(input_h * scale), int(input_w * scale)
@@ -129,21 +143,10 @@ class Letterbox(T.Transform):
 @register()
 class UnLetterbox(T.Transform):
     """
-    A Transform that undoes a Letterbox(…) operation on BoundingBoxes or KeyPoints,
-    given the original image size (h,w).
+    A Transform that undoes a Letterbox(…) operation given the original image size (h,w).
 
-    It recomputes the same scale & padding that Letterbox would have used,
-    then subtracts the padding and divides by that scale. Finally, it clamps
-    so no coordinate exceeds the original image's boundaries.
-
-    Usage:
-       unletter = UnLetterbox(orig_size=(orig_h,orig_w), canvas_size=(canvas_h,canvas_w))
-       boxes_640 = ...        # a BoundingBoxes in the 640x640 frame
-       boxes_orig = unletter.transform(boxes_640, params=None)
-       # output boxes_orig has shape [N,4], in the original pixel frame.
-
-       kp_640 = ...           # KeyPoints in the 640x640 frame
-       kp_orig = unletter.transform(kp_640, params=None)
+    It recomputes the same scale & padding that Letterbox would have used, then subtracts the padding and divides
+    by that scale. Finally, it clamps so no coordinate exceeds the original image's boundaries.
     """
 
     _transformed_types = (
@@ -160,8 +163,8 @@ class UnLetterbox(T.Transform):
         self.orig_canvas_size = inpt[0]["orig_canvas_size"]
         return super().__call__(inpt)
 
-    def make_params(self, flattened_inputs: Any) -> Dict[str, Any]:
-        input_img = flattened_inputs[0]
+    def make_params(self, inpts: Any) -> Dict[str, Any]:
+        input_img = inpts[0]
         lb_canvas_h, lb_canvas_w = F.get_size(input_img)
         orig_content_h, orig_content_w = self.orig_canvas_size
 
@@ -189,6 +192,32 @@ class UnLetterbox(T.Transform):
         pad_top = params["pad_top"]
         cropped = F.crop(inpt, pad_top, pad_left, content_h, content_w)
         resized = F.resize(cropped, size=self.orig_canvas_size)
+        return resized
+
+
+@register()
+class OriginalSize(T.Transform):
+    """
+    Resizes targets to the original input size passed in via `orig_canvas_size` in the caller's dict values.
+    This size is in (h,w) format following torchvision size conventions.
+    """
+
+    _transformed_types = (
+        PIL.Image.Image,
+        Image,
+        Video,
+        Mask,
+        BoundingBoxes,
+        KeyPoints,
+    )
+
+
+    def __call__(self, *inpt: Any):
+        self.orig_canvas_size = inpt[0]["orig_canvas_size"]
+        return super().__call__(inpt)
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        resized = F.resize(inpt, size=self.orig_canvas_size)
         return resized
 
 
@@ -272,7 +301,7 @@ class EncodeInvisibleKeyPoints(T.Transform):
 class DecodeInvisibleKeyPoints(T.Transform):
     """
     After all the geometric ops, find any NaN in KeyPoints and force it back to 0.
-    That returns invisible keypoints to (0,0) on the final canvas.
+    This returns invisible keypoints to (0,0) on the final canvas.
     """
 
     _transformed_types = (KeyPoints,)
@@ -283,3 +312,38 @@ class DecodeInvisibleKeyPoints(T.Transform):
         nan_mask = torch.isnan(coords)
         coords[nan_mask] = 0.0
         return coords
+
+
+@register()
+class RandomScale(T.Transform):
+    """
+    Choose a random square multiplier around the base size and resize both images and annotations accordingly.
+    """
+
+    _transformed_types = (BoundingBoxes, Image, KeyPoints, Mask, PIL.Image.Image,)
+
+
+    def __init__(self, base_size_repeat: int = 3):
+        super().__init__()
+        self.base_size_repeat = base_size_repeat
+
+    def _generate_scales(self, base_size, base_size_repeat):
+        scale_repeat = (base_size - int(base_size * 0.75 / 32) * 32) // 32
+        scales = [int(base_size * 0.75 / 32) * 32 + i * 32 for i in range(scale_repeat)]
+        scales += [base_size] * base_size_repeat
+        scales += [int(base_size * 1.25 / 32) * 32 - i * 32 for i in range(scale_repeat)]
+        return scales
+
+    def make_params(self, inpts: Any) -> Dict[str, Any]:
+        img = inpts[0]
+        h, w = F.get_size(img)
+        scales = self._generate_scales(h, self.base_size_repeat)
+        new_h = random.choice(scales)
+        scale = new_h / float(h)
+        new_w = int(round(w * scale))
+        return {"size": (new_h, new_w)}
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        size = params["size"]
+        resized = F.resize(inpt, size=size)
+        return resized

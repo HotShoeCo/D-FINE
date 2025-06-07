@@ -510,8 +510,6 @@ COCO2017で **D-FINE-L** を320x320の入力サイズでトレーニングした
         transforms:
             ops:
                 - {type: Resize, size: [320, 320], }
-    collate_fn:
-        base_size: 320
     dataset:
         transforms:
             ops:

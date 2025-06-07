@@ -66,6 +66,10 @@ DFINETransformer:
 
 DFINEPostProcessor:
   num_top_queries: 300
+  transforms:
+    - type: OriginalSize
+    - type: ConvertBoundingBoxFormat
+      format: "XYXY"
 
 
 DFINECriterion:

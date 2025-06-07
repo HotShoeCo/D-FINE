@@ -510,8 +510,6 @@ If you'd like to train **D-FINE-L** on COCO2017 with an input size of 320x320, f
         transforms:
             ops:
                 - {type: Resize, size: [320, 320], }
-    collate_fn:
-        base_size: 320
     dataset:
         transforms:
             ops:

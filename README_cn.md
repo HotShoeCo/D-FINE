@@ -497,8 +497,6 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --master_port=7777 --nproc_per_node=4 trai
         transforms:
             ops:
                 - {type: Resize, size: [320, 320], }
-    collate_fn:
-        base_size: 320
     dataset:
         transforms:
             ops:
