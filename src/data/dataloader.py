@@ -9,7 +9,8 @@ import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
 from functools import partial
-from .transforms import RandomScale
+from torchvision.tv_tensors import set_return_type
+from .transforms import NormalizeAnnotations, RandomScale
 from ..core import register
 
 
@@ -84,18 +85,21 @@ class BatchImageCollateFunction(BaseCollateFunction):
         self.ema_restart_decay = ema_restart_decay
         self.stop_epoch = stop_epoch if stop_epoch is not None else 100000000
 
-        if base_size_repeat is None:
-            self.transforms = None
-        else:
-            self.transforms = T.Compose([
-                RandomScale(self.base_size_repeat)
-            ])
+        # if base_size_repeat is None:
+        #     self.transforms = None
+        # else:
+        #     self.transforms = RandomScale(self.base_size_repeat)
 
 
     def __call__(self, items):
-        if self.epoch < self.stop_epoch and self.transforms is not None:
-            items = self.transforms(items)
-            
-        images = torch.cat([x[0][None] for x in items], dim=0)
-        targets = [x[1] for x in items]
-        return images, targets
+        # if self.epoch < self.stop_epoch and self.transforms is not None:
+        #     items = self.transforms(items)
+
+        with set_return_type("TVTensor"):
+            targets = []
+            for img, tgt in items:
+                tgt["image"] = img
+                targets.append(tgt)
+
+            return targets
+

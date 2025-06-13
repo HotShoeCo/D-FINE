@@ -4,6 +4,9 @@ train_dataloader:
   dataset:
     transforms:
       ops:
+        - type: ToImage
+          dtype: 'float32'
+          scale: True
         - type: EncodeInvisibleKeyPoints
         - type: ClampBoundingBoxes
         - type: RandomHorizontalFlip
@@ -17,9 +20,6 @@ train_dataloader:
           min_size: 1
         - type: Resize
           size: *eval_spatial_size
-        - type: ConvertPILImage
-          dtype: 'float32'
-          scale: True
         - type: ConvertBoundingBoxFormat
           format: "CXCYWH"
         - type: NormalizeAnnotations
@@ -44,13 +44,13 @@ val_dataloader:
   dataset:
     transforms:
       ops:
+        - type: ToImage
+          dtype: 'float32'
+          scale: True
         - type: Resize
           size: *eval_spatial_size
         - type: ConvertBoundingBoxFormat
           format: "CXCYWH"
-        - type: ConvertPILImage
-          dtype: 'float32'
-          scale: True
   shuffle: False
   total_batch_size: 64
   num_workers: 4

@@ -40,7 +40,6 @@ def save_samples(
     split: str,
     images: torch.Tensor,
     annotations: List[Dict],
-    targets: List[Dict],
     threshold: float = 0.50,
 ):
     os.makedirs(Path(output_dir) / Path(f"{split}_samples"), exist_ok=True)
@@ -48,7 +47,7 @@ def save_samples(
     font = ImageFont.load_default()
     font.size = 32
 
-    for sample, anno, target in zip(images, annotations, targets):
+    for sample, anno in zip(images, annotations):
         label_strings = [str(int(l)) for l in anno["labels"]]
         gt_boxes = anno["boxes"]
         gt_kps = anno.get("keypoints")
@@ -73,7 +72,7 @@ def save_samples(
                 k = k.unsqueeze(0)
                 out_img = draw_keypoints(out_img, k, colors=c, radius=2)
 
-        save_path = Path(output_dir) / f"{split}_samples" / f"{Path(target['image_path']).stem}.webp"
+        save_path = Path(output_dir) / f"{split}_samples" / f"{Path(anno['image_path']).stem}.webp"
         pil_img = F.to_pil_image(out_img)
         pil_img.save(save_path)
 

@@ -6,10 +6,12 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as TVF
 
 from torchvision.tv_tensors import BoundingBoxes, Image, KeyPoints, set_return_type
 from ...core import register
+from ...data.transforms import DenormalizeAnnotations, ConvertBoundingBoxFormat
 from ...data.transforms.container import Compose
 
 __all__ = ["DFINEPostProcessor"]
@@ -38,8 +40,13 @@ class DFINEPostProcessor(nn.Module):
         self.num_classes = int(num_classes)
         self.num_top_queries = num_top_queries
         self.remap_mscoco_category = remap_mscoco_category
-        self.transforms = Compose(ops=transforms)
+        self.post_transforms = Compose(ops=transforms)
         self.use_focal_loss = use_focal_loss
+
+        self._raw_output_transforms = T.Compose([
+            DenormalizeAnnotations(),
+            ConvertBoundingBoxFormat("XYXY"),
+        ])
 
     def extra_repr(self) -> str:
         return f"use_focal_loss={self.use_focal_loss}, num_classes={self.num_classes}, num_top_queries={self.num_top_queries}"
@@ -47,10 +54,9 @@ class DFINEPostProcessor(nn.Module):
     def forward(self, samples, outputs, targets):
         with set_return_type("TVTensor"):
             logits = outputs["pred_logits"]
-            samples = [Image(s) for s in samples]
             boxes = outputs["pred_boxes"]
             keypoints = outputs.get("pred_keypoints", None)
-            boxes, keypoints = self._denormalize(samples, boxes, keypoints)
+            boxes, keypoints = self._prepare_raw_outputs(samples, boxes, keypoints)
 
             if self.use_focal_loss:
                 scores = F.sigmoid(logits)
@@ -100,70 +106,70 @@ class DFINEPostProcessor(nn.Module):
                     .reshape(labels.shape)
                 )
 
-            results = self._package_results(samples, labels, boxes, scores, keypoints)
-            targets, results = self._run_transforms(targets, results)
-            return targets, results
+            # Add the image to the packed values for sample saving methods.
+            image_paths = [t["image_path"] for t in targets]
+            results = self._pack_results(boxes=boxes, labels=labels, scores=scores, keypoints=keypoints, image_path=image_paths)
+            results, targets = self._post_transforms(results, targets)
+            return results, targets
 
-    def _denormalize(self, samples, boxes, keypoints=None):
-        denorm_boxes = []
-        denorm_keypoints = None
-
-        for box, sample in zip(boxes, samples):
-            sample_size = TVF.get_size(sample)
-            box = BoundingBoxes(box, format="CXCYWH", canvas_size=(1,1))
-            box = TVF.resize(box, size=sample_size)
-            box = TVF.convert_bounding_box_format(box, new_format="XYXY")
-            denorm_boxes.append(box)
-
-        denorm_boxes = torch.stack(denorm_boxes) if len(denorm_boxes) > 0 else boxes
+    def _prepare_raw_outputs(self, samples, boxes, keypoints=None):
+        # Wrap with TV Tensors.
+        samples = Image(samples)
+        boxes = [
+            BoundingBoxes(b, format="CXCYWH", canvas_size=(1, 1))
+            for b in boxes
+        ]
 
         if keypoints is not None:
-            denorm_keypoints = []
-            for kpts, sample in zip(keypoints, samples):
-                sample_size = TVF.get_size(sample)
-                kpts = KeyPoints(kpts, canvas_size=(1,1))
-                kpts = TVF.resize(kpts, size=sample_size)
-                denorm_keypoints.append(kpts)
-
-            denorm_keypoints = torch.stack(denorm_keypoints) if len(denorm_keypoints) > 0 else keypoints
-
-        return denorm_boxes, denorm_keypoints
-
-    def _package_results(self, samples, labels, boxes, scores, keypoints):
-        if keypoints is not None:
-            results = [
-                dict(image=img, labels=lab, boxes=box, scores=sco, keypoints=kpt)
-                for (img, lab, box, sco, kpt) in zip(samples, labels, boxes, scores, keypoints)
+            keypoints = [
+                KeyPoints(k, canvas_size=(1, 1))
+                for k in keypoints
             ]
+
+        # Transform
+        results = self._pack_results(image=samples, boxes=boxes, keypoints=keypoints)
+        results = self._raw_output_transforms(results)
+
+        # Merge types again for scoring procedures.
+        boxes = [r["boxes"] for r in results]
+        boxes = torch.stack(boxes)
+
+        keypoints = [r["keypoints"] for r in results if r.get("keypoints") is not None]
+        if len(keypoints) > 0:
+            keypoints = torch.stack(keypoints)
         else:
-            results = [
-                dict(image=img, labels=lab, boxes=box, scores=sco)
-                for (img, lab, box, sco) in zip(samples, labels, boxes, scores)
-            ]
+            keypoints = None
 
-        return results
+        return boxes, keypoints
 
-    def _run_transforms(self, targets, results):
-        if self.transforms is None:
-            return targets, results
+    def _pack_results(self, **kwargs):
+        # Filter out None values
+        valid_items = {k: v for k, v in kwargs.items() if v is not None}
+        field_names = list(valid_items.keys())
+        field_values = list(valid_items.values())
+        return [dict(zip(field_names, values)) for values in zip(*field_values)]
+
+    def _post_transforms(self, results, targets):
+        if self.post_transforms is None:
+            return results, targets
 
         transformed_results = []
         transformed_targets = []
-        for tgt, res in zip(targets, results):
+        for res, tgt in zip(results, targets):
             # orig_size was stored (w,h) while transforms expect (h,w).
             content_size = tgt["orig_size"].flip(dims=[0])
 
             res["orig_canvas_size"] = content_size
-            t_res = self.transforms(res)
+            t_res = self.post_transforms(res)
             transformed_results.append(t_res[0])
             res.pop("orig_canvas_size")
 
             tgt["orig_canvas_size"] = content_size
-            t_tgt = self.transforms(tgt)
+            t_tgt = self.post_transforms(tgt)
             transformed_targets.append(t_tgt[0])
             tgt.pop("orig_canvas_size")
 
-        return transformed_targets, transformed_results
+        return transformed_results, transformed_targets
 
     def deploy(
         self,

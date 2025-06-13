@@ -17,9 +17,10 @@ import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
 from copy import deepcopy
-from torch.amp.grad_scaler import GradScaler
+from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 from ..data import CocoEvaluator
+from ..data.transforms import ConvertBoundingBoxFormat, DenormalizeAnnotations
 from ..data.dataset import mscoco_category2label
 from ..misc import MetricLogger, SmoothedValue, dist_utils, save_samples
 from ..optim import ModelEMA, Warmup
@@ -59,18 +60,27 @@ def train_one_epoch(
     output_dir = kwargs.get("output_dir", None)
     num_visualization_sample_batch = kwargs.get("num_visualization_sample_batch", 1)
 
-    for i, (samples, targets) in enumerate(
+    save_transforms = T.Compose([
+        DenormalizeAnnotations(),
+        ConvertBoundingBoxFormat("XYXY"),
+    ])
+
+    for i, targets in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
     ):
         global_step = epoch * len(data_loader) + i
         metas = dict(epoch=epoch, step=i, global_step=global_step, epoch_step=len(data_loader))
+        targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            annotations = _denormalize_annotations(targets, samples)
-            save_samples(output_dir, "train", samples, annotations, targets)
+            # Need the image embedded in targets for transforms to resize properly.
+            annotations = save_transforms(targets)
+            samples = [t.pop("image").cpu() for t in annotations]
+            save_samples(output_dir, "train", samples, annotations)
+            # Release transformed copy.
+            annotations = None
 
-        samples = samples.to(device)
-        targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
+        samples = torch.cat([t.pop("image")[None] for t in targets], dim=0)
 
         if scaler is not None:
             with torch.autocast(device_type=str(device), cache_enabled=True):
@@ -151,21 +161,6 @@ def train_one_epoch(
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
-def _denormalize_annotations(annotations, samples):
-    annotations = deepcopy(annotations)
-    for sample, anno in zip(samples, annotations):
-        canvas_size = F.get_size(sample)
-
-        boxes = F.resize(anno["boxes"], size=canvas_size)
-        boxes = F.convert_bounding_box_format(boxes, new_format="XYXY")
-        anno["boxes"] = boxes
-
-        if "keypoints" in anno:
-            anno["keypoints"] = F.resize(anno["keypoints"], size=canvas_size)
-
-    return annotations
-
-
 @torch.no_grad()
 def evaluate(
     model: torch.nn.Module,
@@ -195,24 +190,23 @@ def evaluate(
     output_dir = kwargs.get("output_dir", None)
     num_visualization_sample_batch = kwargs.get("num_visualization_sample_batch", 1)
 
-    for i, (samples, targets) in enumerate(metric_logger.log_every(data_loader, 10, header)):
+    for i, targets in enumerate(metric_logger.log_every(data_loader, 10, header)):
         global_step = epoch * len(data_loader) + i
-        samples = samples.to(device)
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
+        samples = torch.cat([t.pop("image")[None] for t in targets], dim=0)
         outputs = model(samples)
-        targets, results = postprocessor(samples, outputs, targets)
+        results, targets = postprocessor(samples, outputs, targets)
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            transformed_samples = [res["image"] for res in results]
-            save_samples(output_dir, "val", transformed_samples, targets, targets)
-            save_samples(output_dir, "pred", transformed_samples, results, targets)
+            save_samples(output_dir, "val", samples, targets)
+            save_samples(output_dir, "pred", samples, results)
 
         if coco_evaluator is not None:
-            coco_results = _format_coco_results(targets, results)
+            coco_results = _format_coco_results(results, targets)
             coco_evaluator.update(coco_results)
 
         # validator format for metrics
-        for target, result in zip(targets, results):
+        for result, target in zip(results, targets):
             gt.append({
                 "boxes": target["boxes"],
                 "labels": target["labels"],
@@ -275,11 +269,11 @@ def _format_coco_keypoints(keypoints):
     return kpt
 
 
-def _format_coco_results(targets, results):
+def _format_coco_results(results, targets):
     results = deepcopy(results)
 
     coco_results = {}
-    for tgt, res in zip(targets, results):
+    for res, tgt in zip(results, targets):
         # While COCO is in XYWH format, the evaluator expects XYXY and converts internally.
         res["boxes"] = F.convert_bounding_box_format(res["boxes"], new_format="XYXY")
 

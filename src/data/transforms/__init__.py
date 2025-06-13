@@ -7,8 +7,8 @@ from ._transforms import (
     ClampBoundingBoxes,
     ColorJitter,
     ConvertBoundingBoxFormat,
-    ConvertPILImage,
     DecodeInvisibleKeyPoints,
+    DenormalizeAnnotations,
     EmptyTransform,
     EncodeInvisibleKeyPoints,
     Letterbox,
@@ -24,6 +24,7 @@ from ._transforms import (
     RandomZoomOut,
     Resize,
     SanitizeBoundingBoxesWithKeyPoints,
+    ToImage,
     UnLetterbox,
 )
 from .container import Compose

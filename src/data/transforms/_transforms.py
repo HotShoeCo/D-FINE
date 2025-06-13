@@ -48,7 +48,6 @@ class RandomIoUCrop(T.RandomIoUCrop):
     """
 
     _transformed_types = (
-        PIL.Image.Image,
         Image,
         Video,
         Mask,
@@ -90,10 +89,9 @@ class Letterbox(T.Transform):
         padding_mode (str): Padding mode passed to F.pad (e.g., "constant", "edge").
 
     Returns:
-        The transformed input, matching the original type (e.g., PIL.Image, tv.Tensor).
+        The transformed input, matching the original type.
     """
     _transformed_types = (
-        PIL.Image.Image,
         Image,
         Video,
         Mask,
@@ -108,7 +106,7 @@ class Letterbox(T.Transform):
         self.padding_mode = padding_mode
 
     def make_params(self, inpts: Any) -> Dict[str, Any]:
-        img = inpts[0]
+        img = next(x for x in inpts if isinstance(x, Image))
         input_h, input_w = F.get_size(img)
         canvas_h, canvas_w = self.canvas_size
         scale = min(canvas_h / input_h, canvas_w / input_w)
@@ -150,7 +148,6 @@ class UnLetterbox(T.Transform):
     """
 
     _transformed_types = (
-        PIL.Image.Image,
         Image,
         Video,
         Mask,
@@ -159,12 +156,12 @@ class UnLetterbox(T.Transform):
     )
 
 
-    def __call__(self, *inpt: Any):
-        self.orig_canvas_size = inpt[0]["orig_canvas_size"]
-        return super().__call__(inpt)
+    def __call__(self, *inpts: Any):
+        self.orig_canvas_size = inpts[0]["orig_canvas_size"]
+        return super().__call__(inpts)
 
     def make_params(self, inpts: Any) -> Dict[str, Any]:
-        input_img = inpts[0]
+        input_img = next(x for x in inpts if isinstance(x, Image))
         lb_canvas_h, lb_canvas_w = F.get_size(input_img)
         orig_content_h, orig_content_w = self.orig_canvas_size
 
@@ -203,7 +200,6 @@ class OriginalSize(T.Transform):
     """
 
     _transformed_types = (
-        PIL.Image.Image,
         Image,
         Video,
         Mask,
@@ -222,22 +218,22 @@ class OriginalSize(T.Transform):
 
 
 @register()
-class ConvertPILImage(T.Transform):
+class ToImage(T.Transform):
     _transformed_types = (PIL.Image.Image,)
 
-    def __init__(self, dtype="float32", scale=True) -> None:
+    def __init__(self, dtype=torch.float32, scale=True) -> None:
         super().__init__()
-        self.dtype = dtype
+        if isinstance(dtype, str):
+            self.dtype = getattr(torch, dtype)
+        else:
+            self.dtype = dtype
+
         self.scale = scale
 
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        tensor = F.pil_to_tensor(inpt)
-        if self.dtype == "float32":
-            tensor = tensor.float()
-        if self.scale:
-            tensor = tensor / 255.0
-        return Image(tensor)
-
+        image = F.to_image(inpt)
+        image = F.to_dtype(image, dtype=self.dtype, scale=self.scale)
+        return image
 
 @register()
 class NormalizeAnnotations(T.Resize):
@@ -253,6 +249,29 @@ class NormalizeAnnotations(T.Resize):
 
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         return super().transform(inpt, params)
+    
+@register()
+class DenormalizeAnnotations(T.Transform):
+    """
+    Denormalizes TV Tensors to the size of the first image in the inputs to make_params.
+    """
+
+    _transformed_types = (BoundingBoxes, Image, KeyPoints, Mask)
+
+    def make_params(self, inpts: Any) -> Dict[str, Any]:
+        img = next(x for x in inpts if isinstance(x, Image))
+        return {
+            "canvas_size": F.get_size(img)
+        }
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        if isinstance(inpt, Image):
+            # Image was just passed in to get canvas_size for the rest of the annotations.
+            return inpt
+        
+        canvas_size = params["canvas_size"]
+        resized = F.resize(inpt, canvas_size)
+        return resized
 
 
 @register()
@@ -320,7 +339,7 @@ class RandomScale(T.Transform):
     Choose a random square multiplier around the base size and resize both images and annotations accordingly.
     """
 
-    _transformed_types = (BoundingBoxes, Image, KeyPoints, Mask, PIL.Image.Image,)
+    _transformed_types = (BoundingBoxes, Image, KeyPoints, Mask)
 
 
     def __init__(self, base_size_repeat: int = 3):
@@ -335,7 +354,9 @@ class RandomScale(T.Transform):
         return scales
 
     def make_params(self, inpts: Any) -> Dict[str, Any]:
-        img = inpts[0]
+        # This transform is called with an entire batch of images and their annotations. The entire batch needs to be
+        # resized the same, so the scaling will be based off the size of the first image we encounter.
+        img = next(x for x in inpts if isinstance(x, Image))
         h, w = F.get_size(img)
         scales = self._generate_scales(h, self.base_size_repeat)
         new_h = random.choice(scales)
