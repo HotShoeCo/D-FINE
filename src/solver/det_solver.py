@@ -73,6 +73,14 @@ class DetSolver(BaseSolver):
                     self.ema.decay = self.train_dataloader.collate_fn.ema_restart_decay
                     print(f"Refresh EMA at epoch {epoch} with decay {self.ema.decay}")
 
+            freeze_layers = self.cfg.freeze_schedule.get(epoch)
+            if freeze_layers:
+                if freeze_layers < 0:
+                    self.model.backbone.unfreeze_layers()
+                    self.model.backbone.freeze_norm(False)
+                else:
+                    self.model.backbone.freeze_layers(freeze_layers)
+
             train_stats = train_one_epoch(
                 self.model,
                 self.criterion,

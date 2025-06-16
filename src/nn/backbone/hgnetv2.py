@@ -491,14 +491,15 @@ class HGNetv2(nn.Module):
                 )
             )
 
-        if freeze_at >= 0:
-            self._freeze_parameters(self.stem)
-            if not freeze_stem_only:
-                for i in range(min(freeze_at + 1, len(self.stages))):
-                    self._freeze_parameters(self.stages[i])
-
+        
         if freeze_norm:
-            self._freeze_norm(self)
+            self.freeze_norm(True)
+
+        if freeze_stem_only:
+            self.freeze_layers()
+        elif freeze_at > -1:
+            self.freeze_layers(freeze_at)
+
 
         if pretrained:
             RED, GREEN, RESET = "\033[91m", "\033[92m", "\033[0m"
@@ -555,19 +556,34 @@ class HGNetv2(nn.Module):
                     )
                 exit()
 
-    def _freeze_norm(self, m: nn.Module):
-        if isinstance(m, nn.BatchNorm2d):
-            m = FrozenBatchNorm2d(m.num_features)
-        else:
-            for name, child in m.named_children():
-                _child = self._freeze_norm(child)
-                if _child is not child:
-                    setattr(m, name, _child)
-        return m
+    def freeze_norm(self, freeze=True):
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                requires_grad = not freeze
+                for p in m.parameters():
+                    p.requires_grad = requires_grad
 
-    def _freeze_parameters(self, m: nn.Module):
-        for p in m.parameters():
-            p.requires_grad = False
+    def freeze_layers(self, through_index=-1):
+        self._set_frozen_layers(through_index, True)
+
+    def unfreeze_layers(self):
+        self._set_frozen_layers(-1, False)
+                
+    def _set_frozen_layers(self, through_index, frozen):
+        """
+        Freeze or unfreeze the stem and the first `num_stages` stages.
+
+        Args:
+            num_stages (int): Number of stages to freeze on top of the stem.
+            freeze (bool): If False, unfreezes everything.
+        """
+        for p in self.stem.parameters():
+            p.requires_grad = not frozen
+
+        for idx, stage in enumerate(self.stages):
+            requires_grad = not (frozen and idx <= through_index)
+            for p in stage.parameters():
+                p.requires_grad = requires_grad
 
     def forward(self, x):
         x = self.stem(x)

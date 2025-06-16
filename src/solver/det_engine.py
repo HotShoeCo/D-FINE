@@ -17,7 +17,7 @@ import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
 from copy import deepcopy
-from torch.cuda.amp.grad_scaler import GradScaler
+from torch.amp import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 from ..data import CocoEvaluator
 from ..data.transforms import ConvertBoundingBoxFormat, DenormalizeAnnotations
