@@ -161,8 +161,8 @@ class UnLetterbox(T.Transform):
         return super().__call__(inpts)
 
     def make_params(self, inpts: Any) -> Dict[str, Any]:
-        input_img = next(x for x in inpts if isinstance(x, Image))
-        lb_canvas_h, lb_canvas_w = F.get_size(input_img)
+        img = next(x for x in inpts if isinstance(x, Image))
+        lb_canvas_h, lb_canvas_w = F.get_size(img)
         orig_content_h, orig_content_w = self.orig_canvas_size
 
         # Recompute scale and padding exactly like Letterbox.make_params.
@@ -251,7 +251,7 @@ class NormalizeAnnotations(T.Resize):
         return super().transform(inpt, params)
     
 @register()
-class DenormalizeAnnotations(T.Transform):
+class Denormalize(T.Transform):
     """
     Denormalizes TV Tensors to the size of the first image in the inputs to make_params.
     """

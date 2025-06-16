@@ -491,7 +491,6 @@ class HGNetv2(nn.Module):
                 )
             )
 
-        
         if freeze_norm:
             self.freeze_norm(True)
 
@@ -499,7 +498,6 @@ class HGNetv2(nn.Module):
             self.freeze_layers()
         elif freeze_at > -1:
             self.freeze_layers(freeze_at)
-
 
         if pretrained:
             RED, GREEN, RESET = "\033[91m", "\033[92m", "\033[0m"
@@ -568,7 +566,7 @@ class HGNetv2(nn.Module):
 
     def unfreeze_layers(self):
         self._set_frozen_layers(-1, False)
-                
+
     def _set_frozen_layers(self, through_index, frozen):
         """
         Freeze or unfreeze the stem and the first `num_stages` stages.

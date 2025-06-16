@@ -8,7 +8,7 @@ from ._transforms import (
     ColorJitter,
     ConvertBoundingBoxFormat,
     DecodeInvisibleKeyPoints,
-    DenormalizeAnnotations,
+    Denormalize,
     EmptyTransform,
     EncodeInvisibleKeyPoints,
     Letterbox,

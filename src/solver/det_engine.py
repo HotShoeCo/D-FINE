@@ -19,8 +19,9 @@ import torchvision.transforms.v2.functional as F
 from copy import deepcopy
 from torch.amp import GradScaler
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.tv_tensors import set_return_type
 from ..data import CocoEvaluator
-from ..data.transforms import ConvertBoundingBoxFormat, DenormalizeAnnotations
+from ..data.transforms import ConvertBoundingBoxFormat, Denormalize
 from ..data.dataset import mscoco_category2label
 from ..misc import MetricLogger, SmoothedValue, dist_utils, save_samples
 from ..optim import ModelEMA, Warmup
@@ -61,7 +62,7 @@ def train_one_epoch(
     num_visualization_sample_batch = kwargs.get("num_visualization_sample_batch", 1)
 
     save_transforms = T.Compose([
-        DenormalizeAnnotations(),
+        Denormalize(),
         ConvertBoundingBoxFormat("XYXY"),
     ])
 
@@ -192,10 +193,12 @@ def evaluate(
 
     for i, targets in enumerate(metric_logger.log_every(data_loader, 10, header)):
         global_step = epoch * len(data_loader) + i
-        targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
-        samples = torch.cat([t.pop("image")[None] for t in targets], dim=0)
-        outputs = model(samples)
-        results, targets = postprocessor(samples, outputs, targets)
+        with set_return_type("TVTensor"):
+            targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
+            samples = torch.cat([t.pop("image")[None] for t in targets], dim=0)
+
+        results = model(samples)
+        samples, results, targets = postprocessor(samples, results, targets)
 
         if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
             save_samples(output_dir, "val", samples, targets)
