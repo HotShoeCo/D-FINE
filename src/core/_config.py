@@ -74,6 +74,7 @@ class BaseConfig(object):
         self.eval_spatial_size: tuple = None
         self.num_visualization_sample_batch: int = 1
         self.output_dir: str = None
+        self.prediction_render_freq: int = 0,
         self.summary_dir: str = None
         self.device: str = ""
 

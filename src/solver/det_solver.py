@@ -120,6 +120,7 @@ class DetSolver(BaseSolver):
                 self.use_wandb,
                 output_dir=self.output_dir,
                 num_visualization_sample_batch=self.cfg.num_visualization_sample_batch,
+                prediction_render_freq=self.cfg.prediction_render_freq,
             )
 
             best_stat.update(epoch, test_stats)

@@ -188,8 +188,9 @@ def evaluate(
     gt: List[Dict[str, torch.Tensor]] = []
     preds: List[Dict[str, torch.Tensor]] = []
 
-    output_dir = kwargs.get("output_dir", None)
     num_visualization_sample_batch = kwargs.get("num_visualization_sample_batch", 1)
+    output_dir = kwargs.get("output_dir", None)
+    prediction_render_freq = kwargs.get("prediction_render_freq", 0)
 
     for i, targets in enumerate(metric_logger.log_every(data_loader, 10, header)):
         global_step = epoch * len(data_loader) + i
@@ -200,9 +201,14 @@ def evaluate(
         results = model(samples)
         samples, results, targets = postprocessor(samples, results, targets)
 
-        if global_step < num_visualization_sample_batch and output_dir is not None and dist_utils.is_main_process():
-            save_samples(output_dir, "val", samples, targets)
-            save_samples(output_dir, "pred", samples, results)
+        if output_dir is not None and dist_utils.is_main_process():
+            # Save val renderings once at epoch 0.
+            if global_step < num_visualization_sample_batch:
+                save_samples(output_dir, "val", samples, targets)
+
+            # Save prediction renderings at the top of each epoch.
+            if prediction_render_freq > 0 and epoch % prediction_render_freq == 0 and i < num_visualization_sample_batch:
+                save_samples(output_dir, f"pred_epoch_{epoch}", samples, results)
 
         if coco_evaluator is not None:
             coco_results = _format_coco_results(results, targets)
