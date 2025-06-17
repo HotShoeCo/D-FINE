@@ -136,9 +136,15 @@ class DFINECriterion(nn.Module):
 
         return losses
     
-    def loss_keypoints(self, outputs, targets, indices, num_boxes, boxes_weight=None):
-        #TODOBB
-        return self.loss_boxes(outputs, targets, indices, num_boxes, boxes_weight)
+    def loss_keypoints(self, outputs, targets, indices, num_boxes):
+        assert "pred_keypoints" in outputs
+        idx = self._get_src_permutation_idx(indices)
+        src_keypoints = outputs["pred_keypoints"][idx]
+        target_keypoints = torch.cat([t["keypoints"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+
+        loss_kpt = F.l1_loss(src_keypoints, target_keypoints, reduction="none")
+        losses = {"loss_keypoints": loss_kpt.sum() / num_boxes}
+        return losses
 
     def loss_local(self, outputs, targets, indices, num_boxes, T=5):
         """Compute Fine-Grained Localization (FGL) Loss

@@ -52,12 +52,14 @@ def merge_dict(dct, another_dct, inplace=True) -> Dict:
     """merge another_dct into dct"""
 
     def _merge(dct, another) -> Dict:
-        for k in another:
-            if k in dct and isinstance(dct[k], dict) and isinstance(another[k], dict):
-                _merge(dct[k], another[k])
+        for k, v in another.items():
+            # if v is a dict and contains a delete flag, replace fully
+            if isinstance(v, dict) and v.pop("_delete_", False):
+                dct[k] = v
+            elif k in dct and isinstance(dct[k], dict) and isinstance(v, dict):
+                _merge(dct[k], v)
             else:
-                dct[k] = another[k]
-
+                dct[k] = v
         return dct
 
     if not inplace:

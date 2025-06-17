@@ -14,6 +14,7 @@ import torch
 
 from ..misc import dist_utils, stats
 from ._solver import BaseSolver
+from .best_stat import BestStat
 from .det_engine import evaluate, train_one_epoch
 
 
@@ -36,10 +37,8 @@ class DetSolver(BaseSolver):
         n_parameters, model_stats = stats(self.cfg)
         print(model_stats)
         print("-" * 42 + "Start training" + "-" * 43)
-        top1 = 0
-        best_stat = {
-            "epoch": -1,
-        }
+        best_stat = BestStat()
+
         if self.last_epoch > 0:
             module = self.ema.module if self.ema else self.model
             test_stats, coco_evaluator = evaluate(
@@ -52,15 +51,11 @@ class DetSolver(BaseSolver):
                 self.last_epoch,
                 self.use_wandb
             )
-            for k in test_stats:
-                best_stat["epoch"] = self.last_epoch
-                best_stat[k] = test_stats[k][0]
-                top1 = test_stats[k][0]
-                print(f"best_stat: {best_stat}")
+            best_stat.update(test_stats)
 
-        best_stat_print = best_stat.copy()
         start_time = time.time()
         start_epoch = self.last_epoch + 1
+        
         for epoch in range(start_epoch, args.epochs):
             self.train_dataloader.set_epoch(epoch)
             # self.train_dataloader.dataset.set_epoch(epoch)
@@ -127,58 +122,32 @@ class DetSolver(BaseSolver):
                 num_visualization_sample_batch=self.cfg.num_visualization_sample_batch,
             )
 
-            # TODO
+            best_stat.update(epoch, test_stats)
+            current_best_stat = best_stat.get_best()
+
+            if dist_utils.is_main_process():
+                print(f"Current Best Stat:\n  epoch: {current_best_stat['epoch']}")
+                for k, v in current_best_stat.items():
+                    if k != "epoch":
+                        print(f"  {k}: {v}")
+
+                # Save best checkpoint for stage 1 or 2
+                stop_epoch = self.train_dataloader.collate_fn.stop_epoch
+                if self.output_dir and best_stat.is_current_best(epoch):
+                    ckpt_name = "best_stg1.pth" if epoch < stop_epoch else "best_stg2.pth"
+                    dist_utils.save_on_master(self.state_dict(), self.output_dir / ckpt_name)
+
             for k in test_stats:
                 if self.writer and dist_utils.is_main_process():
                     for i, v in enumerate(test_stats[k]):
                         self.writer.add_scalar(f"Test/{k}_{i}".format(k), v, epoch)
 
-                if k in best_stat:
-                    best_stat["epoch"] = (
-                        epoch if test_stats[k][0] > best_stat[k] else best_stat["epoch"]
-                    )
-                    best_stat[k] = max(best_stat[k], test_stats[k][0])
-                else:
-                    best_stat["epoch"] = epoch
-                    best_stat[k] = test_stats[k][0]
-
-                if best_stat[k] > top1:
-                    best_stat_print["epoch"] = epoch
-                    top1 = best_stat[k]
-                    if self.output_dir:
-                        if epoch >= self.train_dataloader.collate_fn.stop_epoch:
-                            dist_utils.save_on_master(
-                                self.state_dict(), self.output_dir / "best_stg2.pth"
-                            )
-                        else:
-                            dist_utils.save_on_master(
-                                self.state_dict(), self.output_dir / "best_stg1.pth"
-                            )
-
-                best_stat_print[k] = max(best_stat[k], top1)
-                print(f"best_stat: {best_stat_print}")  # global best
-
-                if best_stat["epoch"] == epoch and self.output_dir:
-                    if epoch >= self.train_dataloader.collate_fn.stop_epoch:
-                        if test_stats[k][0] > top1:
-                            top1 = test_stats[k][0]
-                            dist_utils.save_on_master(
-                                self.state_dict(), self.output_dir / "best_stg2.pth"
-                            )
-                    else:
-                        top1 = max(test_stats[k][0], top1)
-                        dist_utils.save_on_master(
-                            self.state_dict(), self.output_dir / "best_stg1.pth"
-                        )
-
-                elif epoch >= self.train_dataloader.collate_fn.stop_epoch:
-                    best_stat = {
-                        "epoch": -1,
-                    }
-                    if self.ema:
-                        self.ema.decay -= 0.0001
-                        self.load_resume_state(str(self.output_dir / "best_stg1.pth"))
-                        print(f"Refresh EMA at epoch {epoch} with decay {self.ema.decay}")
+            if epoch == self.train_dataloader.collate_fn.stop_epoch:
+                best_stat = BestStat()
+                if self.ema:
+                    self.ema.decay -= 0.0001
+                    self.load_resume_state(str(self.output_dir / "best_stg1.pth"))
+                    print(f"Refresh EMA at epoch {epoch} with decay {self.ema.decay}")
 
             log_stats = {
                 **{f"train_{k}": v for k, v in train_stats.items()},
@@ -198,17 +167,17 @@ class DetSolver(BaseSolver):
                 with (self.output_dir / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
 
-                # for evaluation logs
+                # for evaluation logs (bbox and keypoints)
                 if coco_evaluator is not None:
                     (self.output_dir / "eval").mkdir(exist_ok=True)
-                    if "bbox" in coco_evaluator.coco_eval:
+                    for eval_type, eval_obj in coco_evaluator.coco_eval.items():
                         filenames = ["latest.pth"]
                         if epoch % 50 == 0:
                             filenames.append(f"{epoch:03}.pth")
                         for name in filenames:
                             torch.save(
-                                coco_evaluator.coco_eval["bbox"].eval,
-                                self.output_dir / "eval" / name,
+                                eval_obj.eval,
+                                self.output_dir / "eval" / f"{eval_type}_{name}",
                             )
 
         total_time = time.time() - start_time

@@ -25,7 +25,6 @@ from ..data.transforms import ConvertBoundingBoxFormat, Denormalize
 from ..data.dataset import mscoco_category2label
 from ..misc import MetricLogger, SmoothedValue, dist_utils, save_samples
 from ..optim import ModelEMA, Warmup
-from .validator import Validator
 
 
 def train_one_epoch(
@@ -208,40 +207,14 @@ def evaluate(
             coco_results = _format_coco_results(results, targets)
             coco_evaluator.update(coco_results)
 
-        # validator format for metrics
-        for result, target in zip(results, targets):
-            gt.append({
-                "boxes": target["boxes"],
-                "labels": target["labels"],
-            })
-
-            pred_labels = (
-                torch.tensor([mscoco_category2label[int(x.item())] for x in result["labels"].flatten()])
-                .to(result["labels"].device)
-                .reshape(result["labels"].shape)
-            ) if postprocessor.remap_mscoco_category else result["labels"]
-
-            preds.append(
-                {"boxes": result["boxes"], "labels": pred_labels, "scores": result["scores"]}
-            )
-
-    # Conf matrix, F1, Precision, Recall, box IoU
-    metrics = Validator(gt, preds).compute_metrics()
-    print("Metrics:", metrics)
-    if use_wandb:
-        metrics = {f"metrics/{k}": v for k, v in metrics.items()}
-        metrics["epoch"] = epoch
-        wandb.log(metrics)
-
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    if coco_evaluator is not None:
-        coco_evaluator.synchronize_between_processes()
 
     # accumulate predictions from all images
     stats = {}
     if coco_evaluator is not None:
+        coco_evaluator.synchronize_between_processes()
         coco_evaluator.accumulate()
         coco_evaluator.summarize()
 
