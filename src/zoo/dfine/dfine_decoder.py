@@ -642,9 +642,9 @@ class DFINETransformer(nn.Module):
 
         # init encoder output anchors and valid_mask
         if self.eval_spatial_size:
-            self.anchors, self.valid_mask = self._generate_anchors()
-            self.register_buffer("anchors", self.anchors)
-            self.register_buffer("valid_mask", self.valid_mask)
+            anchors, valid_mask = self._generate_anchors()
+            self.register_buffer("anchors", anchors)
+            self.register_buffer("valid_mask", valid_mask)
 
         self._reset_parameters(feat_channels)
 
