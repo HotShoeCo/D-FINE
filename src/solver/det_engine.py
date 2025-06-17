@@ -135,9 +135,10 @@ def train_one_epoch(
         loss_dict_reduced = dist_utils.reduce_dict(loss_dict)
         loss_value = sum(loss_dict_reduced.values())
         losses.append(loss_value.detach().cpu().numpy())
-
-        if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
+        loss_val = loss_value.detach().cpu().item()
+        
+        if not math.isfinite(loss_val):
+            print(f"Loss is {loss_val}, stopping training")
             print(loss_dict_reduced)
             sys.exit(1)
 
