@@ -55,7 +55,7 @@ class RandomIoUCrop(T.RandomIoUCrop):
         KeyPoints,
     )
 
-    
+
     def __init__(self, p: float = 1.0, **kwargs) -> None:
         super().__init__(**kwargs)
         self.p = p
@@ -72,7 +72,7 @@ class RandomIoUCrop(T.RandomIoUCrop):
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         if not params:
             return inpt
-        
+
         return super().transform(inpt, params)
 
 
@@ -249,7 +249,7 @@ class NormalizeAnnotations(T.Resize):
 
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         return super().transform(inpt, params)
-    
+
 @register()
 class Denormalize(T.Transform):
     """
@@ -268,7 +268,7 @@ class Denormalize(T.Transform):
         if isinstance(inpt, Image):
             # Image was just passed in to get canvas_size for the rest of the annotations.
             return inpt
-        
+
         canvas_size = params["canvas_size"]
         resized = F.resize(inpt, canvas_size)
         return resized

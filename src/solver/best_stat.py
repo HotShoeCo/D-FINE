@@ -27,7 +27,7 @@ class BestStat:
 
         if is_current_pareto:
             to_keep.append(current_stats)
-        
+
         self._pareto_front = to_keep
 
     def get_best(self):

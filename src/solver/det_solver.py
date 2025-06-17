@@ -55,7 +55,7 @@ class DetSolver(BaseSolver):
 
         start_time = time.time()
         start_epoch = self.last_epoch + 1
-        
+
         for epoch in range(start_epoch, args.epochs):
             self.train_dataloader.set_epoch(epoch)
             # self.train_dataloader.dataset.set_epoch(epoch)

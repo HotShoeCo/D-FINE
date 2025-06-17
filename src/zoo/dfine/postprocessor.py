@@ -84,7 +84,7 @@ class DFINEPostProcessor(nn.Module):
                             index=index.view(batch_size, self.num_top_queries, 1, 1)
                                 .expand(batch_size, self.num_top_queries, num_kpts, 2)
                         )
-            
+
             boxes, keypoints = self._wrap_outputs(boxes, keypoints)
 
             # TODO for onnx export
@@ -114,7 +114,7 @@ class DFINEPostProcessor(nn.Module):
         field_names = list(valid_items.keys())
         field_values = list(valid_items.values())
         return [dict(zip(field_names, values)) for values in zip(*field_values)]
-    
+
     def _wrap_outputs(self, boxes, keypoints=None):
         boxes = [
                 BoundingBoxes(b, format="CXCYWH", canvas_size=(1, 1))

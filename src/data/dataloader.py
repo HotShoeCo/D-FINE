@@ -79,7 +79,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
         ema_restart_decay=0.9999,
         base_size_repeat=None,
     ) -> None:
-        
+
         super().__init__()
         self.base_size_repeat = base_size_repeat
         self.ema_restart_decay = ema_restart_decay
@@ -102,4 +102,3 @@ class BatchImageCollateFunction(BaseCollateFunction):
                 targets.append(tgt)
 
             return targets
-

@@ -18,7 +18,7 @@ from torchvision.utils import draw_bounding_boxes, draw_keypoints
 from typing import Optional, Tuple, List, Dict, Union
 
 
-__all__ = ["show_sample", "save_samples"]
+__all__ = ["save_samples"]
 
 BOX_COLORS = [
     "red", "blue", "green", "orange", "purple",

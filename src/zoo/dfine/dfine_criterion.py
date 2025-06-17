@@ -135,7 +135,7 @@ class DFINECriterion(nn.Module):
         losses["loss_giou"] = loss_giou.sum() / num_boxes
 
         return losses
-    
+
     def loss_keypoints(self, outputs, targets, indices, num_boxes):
         assert "pred_keypoints" in outputs
         idx = self._get_src_permutation_idx(indices)
