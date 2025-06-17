@@ -67,6 +67,7 @@ DFINETransformer:
 DFINEPostProcessor:
   num_top_queries: 300
   transforms:
+    - type: Denormalize
     - type: OriginalSize
     - type: ConvertBoundingBoxFormat
       format: "XYXY"
